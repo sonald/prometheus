@@ -149,8 +149,7 @@ static struct timeval first_time = {0, 0};
 
 static void render_scene(int width, int height)
 {
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-
+    //glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
     struct timeval tm;
     gettimeofday(&tm, NULL);
@@ -169,12 +168,11 @@ static void render_scene(int width, int height)
                        1, GL_FALSE, glm::value_ptr(modelM));
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    glFinish();
 }
 
 struct DisplayContext {
     int fd;                                 //drm device handle
+    EGLDisplay display;
 
     unsigned int front_buf;
     int bufs[2];
@@ -183,11 +181,111 @@ struct DisplayContext {
     uint32_t conn; // connector id
     uint32_t crtc; // crtc id
 
+    struct gbm_surface *gbmSurface;
+    struct gbm_bo *bo;
+
+    EGLSurface surface;
+
     bool pflip_pending;
     bool cleanup;
 };
 
 static DisplayContext dc;
+
+static void render()
+{
+    uint32_t handle, stride;
+    int ret;
+
+    uint32_t fb_id = 0; 
+
+    if (!gbm_surface_has_free_buffers(dc.gbmSurface) || dc.bo) {
+        printf("has no free buffers, free bo.");
+        gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
+    }
+
+    render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
+    printf("render_scene\n");
+    if (!eglSwapBuffers(dc.display, dc.surface)) {
+        printf("cannot swap buffers");
+        exit(-1);
+    }
+
+    struct gbm_bo* bo = dc.bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    if (!dc.bo) {
+        printf("cannot lock front buffer during creation");
+        exit(-1);
+    }
+
+    handle = gbm_bo_get_handle(bo).u32;
+    stride = gbm_bo_get_stride(bo);
+    int width = gbm_bo_get_width(bo);
+    int height = gbm_bo_get_height(bo);
+    printf("w, h: %d, %d\n", width, height);
+
+    ret = drmModeAddFB(dc.fd, width, height, 24, 32, stride, handle, &fb_id);
+    if(ret) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
+    printf("fb_id = %u\n", fb_id);
+    ret = drmModeSetCrtc(dc.fd, dc.crtc, fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+    if(ret) { printf("Could not set mode!"); exit(0); }
+
+    ret = drmModePageFlip(dc.fd, dc.crtc, fb_id, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+    if (ret) {
+        fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n", dc.conn, errno);
+    } else {
+        dc.pflip_pending = true;
+    }
+
+}
+
+static void modeset_page_flip_event(int fd, unsigned int frame,
+        unsigned int sec, unsigned int usec,
+        void *data)
+{
+    std::cerr << __PRETTY_FUNCTION__ << std::endl;
+    dc.pflip_pending = false;
+    render();
+}
+
+static void draw_loop()
+{
+    int fd = dc.fd;
+    int ret;
+    fd_set fds;
+    time_t start, cur;
+    struct timeval v;
+    drmEventContext ev;
+
+    /* init variables */
+    srand(time(&start));
+    FD_ZERO(&fds);
+    memset(&v, 0, sizeof(v));
+    memset(&ev, 0, sizeof(ev));
+    ev.version = DRM_EVENT_CONTEXT_VERSION;
+    ev.page_flip_handler = modeset_page_flip_event;
+
+    render();
+
+    int duration = 20;
+    /* wait 5s for VBLANK or input events */
+    while (time(&cur) < start + duration) {
+        FD_SET(0, &fds);
+        FD_SET(fd, &fds);
+        v.tv_sec = start + duration - cur;
+
+        ret = select(fd + 1, &fds, NULL, NULL, &v);
+        if (ret < 0) {
+            fprintf(stderr, "select() failed with %d: %m\n", errno);
+            break;
+        } else if (FD_ISSET(0, &fds)) {
+            fprintf(stderr, "exit due to user-input\n");
+            break;
+        } else if (FD_ISSET(fd, &fds)) {
+            std::cerr << "handle event" << std::endl;
+            drmHandleEvent(fd, &ev);
+        }
+    }
+}
 
 int main(int argc,char* argv[])
 {
@@ -220,10 +318,10 @@ int main(int argc,char* argv[])
         EGL_NONE
     };
 
-    EGLDisplay dpy = eglGetDisplay(gbm);
-    eglInitialize(dpy, &major, &minor);
-    ver = eglQueryString(dpy, EGL_VERSION);
-    extensions = eglQueryString(dpy, EGL_EXTENSIONS);
+    dc.display = eglGetDisplay(gbm);
+    eglInitialize(dc.display, &major, &minor);
+    ver = eglQueryString(dc.display, EGL_VERSION);
+    extensions = eglQueryString(dc.display, EGL_EXTENSIONS);
     fprintf(stderr, "ver: %s, ext: %s\n", ver, extensions);
 
     if (!strstr(extensions, "EGL_KHR_surfaceless_context")) {
@@ -235,18 +333,16 @@ int main(int argc,char* argv[])
     //acquire drm resources
     resources = drmModeGetResources(dc.fd);
     if(resources==0) { printf("drmModeGetResources failed"); exit(0); }
-    //*
 
 
     int i;
-
     //acquire drm connector
     for(i=0;i<resources->count_connectors;++i) {
         connector = drmModeGetConnector(dc.fd,resources->connectors[i]);
         if(connector==0) { continue; }
         if(connector->connection==DRM_MODE_CONNECTED && connector->count_modes>0) {
-            break; 
             dc.conn = connector->connector_id;
+            break; 
         }
         drmModeFreeConnector(connector);
     }
@@ -267,10 +363,10 @@ int main(int argc,char* argv[])
     dc.crtc = encoder->crtc_id;
 
     //check for requested mode
-    for(i=0;i<connector->count_modes;++i) {
-        dc.mode = connector->modes[i];
-        if( (dc.mode.hdisplay==XRES) && (dc.mode.vdisplay==YRES) ) { break; }
-    }
+    //for(i=0;i<connector->count_modes;++i) {
+        //dc.mode = connector->modes[i];
+        //if( (dc.mode.hdisplay==XRES) && (dc.mode.vdisplay==YRES) ) { break; }
+    //}
     dc.mode = connector->modes[0];
     if(i==connector->count_modes) {
         printf("Requested mode not found!"); exit(0); 
@@ -282,83 +378,46 @@ int main(int argc,char* argv[])
 
     EGLConfig conf;
     int num_conf;
-    EGLBoolean ret = eglChooseConfig(dpy, conf_att, &conf, 1, &num_conf);
+    EGLBoolean ret = eglChooseConfig(dc.display, conf_att, &conf, 1, &num_conf);
     if (!ret || num_conf != 1) {
         printf("cannot find a proper EGL framebuffer configuration");
         exit(-1);
     }
 
-    ctx = eglCreateContext(dpy, conf, EGL_NO_CONTEXT, ctx_att);
+    ctx = eglCreateContext(dc.display, conf, EGL_NO_CONTEXT, ctx_att);
     if (ctx == EGL_NO_CONTEXT) {
         printf("no context created.\n"); exit(0);
     }
-    //eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx);
+    //eglMakeCurrent(dc.display, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx);
 
-    struct gbm_bo *bo;
-    struct gbm_surface *gbmSurface;
-    uint32_t handle, stride;
-
-    gbmSurface = gbm_surface_create(gbm, dc.mode.hdisplay,
+    dc.gbmSurface = gbm_surface_create(gbm, dc.mode.hdisplay,
                       dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
                       GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
-    if (!gbmSurface) {
+    if (!dc.gbmSurface) {
         printf("cannot create gbm surface (%d): %m", errno);
         exit(-EFAULT);
     }
 
-    EGLSurface surface = eglCreateWindowSurface(dpy, conf,
-                          (EGLNativeWindowType)gbmSurface,
+    dc.surface = eglCreateWindowSurface(dc.display, conf,
+                          (EGLNativeWindowType)dc.gbmSurface,
                           NULL);
-    if (surface == EGL_NO_SURFACE) {
+    if (dc.surface == EGL_NO_SURFACE) {
         printf("cannot create EGL window surface");
         exit(-1);
     }
 
-    if (!eglMakeCurrent(dpy, surface, surface, ctx)) {
+    if (!eglMakeCurrent(dc.display, dc.surface, dc.surface, ctx)) {
         printf("cannot activate EGL context");
         exit(-1);
     }
 
-    if (!gbm_surface_has_free_buffers(gbmSurface)) {
+    if (!gbm_surface_has_free_buffers(dc.gbmSurface)) {
         printf("has no free buffers.");
         exit(-1);
     }
 
     init(dc.mode.hdisplay, dc.mode.vdisplay);
-
-    uint32_t fb_id = 0; 
-    for (int iter = 0; iter < 3000; iter++) {
-        if (fb_id) {
-            gbm_surface_release_buffer(gbmSurface, bo);
-        }
-        render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
-        printf("render_scene\n");
-        if (!eglSwapBuffers(dpy, surface)) {
-            printf("cannot swap buffers");
-            exit(-1);
-        }
-
-        bo = gbm_surface_lock_front_buffer(gbmSurface);
-        if (!bo) {
-            printf("cannot lock front buffer during creation");
-            exit(-1);
-        }
-
-        handle = gbm_bo_get_handle(bo).u32;
-        stride = gbm_bo_get_stride(bo);
-        int width = gbm_bo_get_width(bo);
-        int height = gbm_bo_get_height(bo);
-        printf("w, h: %d, %d\n", width, height);
-
-        i = drmModeAddFB(dc.fd, width, height, 24, 32, stride, handle, &fb_id);
-        if(i) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
-        printf("fb_id = %u\n", fb_id);
-        i = drmModeSetCrtc(dc.fd, dc.crtc, fb_id, 0, 0, &dc.conn, 1, &dc.mode);
-        if(i) { printf("Could not set mode!"); exit(0); }
-
-        usleep(33000);
-    }
-
+    draw_loop();
 
     drmModeFreeEncoder(encoder);
     drmModeFreeConnector(connector);
