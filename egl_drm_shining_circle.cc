@@ -149,7 +149,7 @@ static struct timeval first_time = {0, 0};
 
 static void render_scene(int width, int height)
 {
-    //glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
     struct timeval tm;
     gettimeofday(&tm, NULL);
@@ -182,9 +182,13 @@ struct DisplayContext {
     uint32_t crtc; // crtc id
 
     struct gbm_surface *gbmSurface;
-    struct gbm_bo *bo;
     EGLSurface surface;
+
+    struct gbm_bo *bo;
     uint32_t fb_id; 
+
+    struct gbm_bo *next_bo;
+    uint32_t next_fb_id; 
 
     bool pflip_pending;
     bool cleanup;
@@ -200,20 +204,20 @@ static void render()
     uint32_t handle, stride;
     int ret;
 
-    if (!gbm_surface_has_free_buffers(dc.gbmSurface) || dc.bo) {
-        printf("has no free buffers, free bo.");
-        //drmModeRmFB(dc.fd, dc.fb_id);
-        gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
-    }
+
+    //drmModeRmFB(dc.fd, dc.fb_id);
+    gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
+    dc.bo = dc.next_bo;
 
     render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
+
     if (!eglSwapBuffers(dc.display, dc.surface)) {
         printf("cannot swap buffers");
         exit(-1);
     }
 
-    struct gbm_bo* bo = dc.bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
-    if (!dc.bo) {
+    struct gbm_bo* bo = dc.next_bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    if (!dc.next_bo) {
         printf("cannot lock front buffer during creation");
         exit(-1);
     }
@@ -223,13 +227,13 @@ static void render()
     int width = gbm_bo_get_width(bo);
     int height = gbm_bo_get_height(bo);
 
-    ret = drmModeAddFB(dc.fd, width, height, 32, 32, stride, handle, &dc.fb_id);
+    ret = drmModeAddFB(dc.fd, width, height, 32, 32, stride, handle, &dc.next_fb_id);
     if(ret) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
-    printf("handle: %ud, dc.fb_id = %u\n", handle, dc.fb_id);
-    ret = drmModeSetCrtc(dc.fd, dc.crtc, dc.fb_id, 0, 0, &dc.conn, 1, &dc.mode);
-    if(ret) { printf("Could not set mode!"); exit(0); }
+    printf("handle: %ud, dc.next_fb_id = %u\n", handle, dc.next_fb_id);
+    //ret = drmModeSetCrtc(dc.fd, dc.crtc, dc.next_fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+    //if(ret) { printf("Could not set mode!"); exit(0); }
 
-    ret = drmModePageFlip(dc.fd, dc.crtc, dc.fb_id, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+    ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, DRM_MODE_PAGE_FLIP_EVENT, NULL);
     if (ret) {
         fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n", dc.conn, errno);
     } else {
@@ -421,13 +425,36 @@ int main(int argc,char* argv[])
     }
 
     init(dc.mode.hdisplay, dc.mode.vdisplay);
+
+    if (!eglSwapBuffers(dc.display, dc.surface)) {
+        printf("cannot swap buffers");
+        exit(-1);
+    }
+
+    struct gbm_bo* bo = dc.bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    if (!dc.bo) {
+        printf("cannot lock front buffer during creation");
+        exit(-1);
+    }
+
+    uint32_t handle, stride;
+    handle = gbm_bo_get_handle(bo).u32;
+    stride = gbm_bo_get_stride(bo);
+    int width = gbm_bo_get_width(bo);
+    int height = gbm_bo_get_height(bo);
+
+    ret = drmModeAddFB(dc.fd, width, height, 32, 32, stride, handle, &dc.fb_id);
+    if(ret) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
+    printf("handle: %ud, dc.fb_id = %u\n", handle, dc.fb_id);
+    ret = drmModeSetCrtc(dc.fd, dc.crtc, dc.fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+    if(ret) { printf("Could not set mode!"); exit(0); }
+
     draw_loop();
 
     drmModeFreeEncoder(encoder);
     drmModeFreeConnector(connector);
     drmModeFreeResources(resources);
     close(dc.fd);
-    //*
 
     return 0;
 }
