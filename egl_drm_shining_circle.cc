@@ -183,8 +183,8 @@ struct DisplayContext {
 
     struct gbm_surface *gbmSurface;
     struct gbm_bo *bo;
-
     EGLSurface surface;
+    uint32_t fb_id; 
 
     bool pflip_pending;
     bool cleanup;
@@ -194,18 +194,19 @@ static DisplayContext dc;
 
 static void render()
 {
+    struct timeval tm_start, tm_end;
+    gettimeofday(&tm_start ,NULL);
+
     uint32_t handle, stride;
     int ret;
 
-    uint32_t fb_id = 0; 
-
     if (!gbm_surface_has_free_buffers(dc.gbmSurface) || dc.bo) {
         printf("has no free buffers, free bo.");
+        //drmModeRmFB(dc.fd, dc.fb_id);
         gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
     }
 
     render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
-    printf("render_scene\n");
     if (!eglSwapBuffers(dc.display, dc.surface)) {
         printf("cannot swap buffers");
         exit(-1);
@@ -221,28 +222,31 @@ static void render()
     stride = gbm_bo_get_stride(bo);
     int width = gbm_bo_get_width(bo);
     int height = gbm_bo_get_height(bo);
-    printf("w, h: %d, %d\n", width, height);
 
-    ret = drmModeAddFB(dc.fd, width, height, 24, 32, stride, handle, &fb_id);
+    ret = drmModeAddFB(dc.fd, width, height, 32, 32, stride, handle, &dc.fb_id);
     if(ret) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
-    printf("fb_id = %u\n", fb_id);
-    ret = drmModeSetCrtc(dc.fd, dc.crtc, fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+    printf("handle: %ud, dc.fb_id = %u\n", handle, dc.fb_id);
+    ret = drmModeSetCrtc(dc.fd, dc.crtc, dc.fb_id, 0, 0, &dc.conn, 1, &dc.mode);
     if(ret) { printf("Could not set mode!"); exit(0); }
 
-    ret = drmModePageFlip(dc.fd, dc.crtc, fb_id, DRM_MODE_PAGE_FLIP_EVENT, NULL);
+    ret = drmModePageFlip(dc.fd, dc.crtc, dc.fb_id, DRM_MODE_PAGE_FLIP_EVENT, NULL);
     if (ret) {
         fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n", dc.conn, errno);
     } else {
         dc.pflip_pending = true;
     }
 
+    gettimeofday(&tm_end, NULL);
+    float timeval = (tm_end.tv_sec - tm_start.tv_sec) +
+        (tm_end.tv_usec - tm_start.tv_usec) / 1000000.0;
+    std::cerr << "frame render duration: " << timeval << std::endl;
 }
 
 static void modeset_page_flip_event(int fd, unsigned int frame,
         unsigned int sec, unsigned int usec,
         void *data)
 {
-    std::cerr << __PRETTY_FUNCTION__ << std::endl;
+    std::cerr << __PRETTY_FUNCTION__ << "frame: " << frame << std::endl;
     dc.pflip_pending = false;
     render();
 }
@@ -310,7 +314,7 @@ int main(int argc,char* argv[])
         EGL_RED_SIZE, 1,
         EGL_GREEN_SIZE, 1,
         EGL_BLUE_SIZE, 1,
-        EGL_ALPHA_SIZE, 0,
+        EGL_ALPHA_SIZE, 1,
         EGL_NONE,
     };
     static const EGLint ctx_att[] = {
