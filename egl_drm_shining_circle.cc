@@ -7,8 +7,8 @@ using namespace std;
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-#define EGL_EGLEXT_PROTOTYPES
-#define GL_GLEXT_PROTOTYPES
+//#define EGL_EGLEXT_PROTOTYPES
+//#define GL_GLEXT_PROTOTYPES
 
 #include <GLFW/glfw3.h>
 
@@ -17,8 +17,8 @@ using namespace std;
 #include <GLES2/gl2ext.h>
 
 #include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <EGL/eglmesaext.h>
+//#include <EGL/eglext.h>
+//#include <EGL/eglmesaext.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -36,7 +36,6 @@ using namespace std;
 #define XRES 800
 #define YRES 600
 #define BPP  32
-
 
 static GLuint create_shader(GLenum type, const char *source)
 {
@@ -158,15 +157,8 @@ static void render_scene(int width, int height)
 
     float timeval = (tm.tv_sec - first_time.tv_sec) +
         (tm.tv_usec - first_time.tv_usec) / 1000000.0;
-    std::cerr << "timeval: " << timeval << std::endl;
     GLint time = glGetUniformLocation(program, "time");
     glUniform1f(time, timeval);
-
-    //model
-    glm::mat4 modelM;
-    modelM = glm::rotate(modelM, timeval * 720.0f, glm::vec3(0.0, 0.0, 1.0));
-    glUniformMatrix4fv(glGetUniformLocation(program, "modelM"),
-                       1, GL_FALSE, glm::value_ptr(modelM));
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
@@ -242,14 +234,14 @@ static void render()
     }
     printf("dc.next_fb_id = %u\n", dc.next_fb_id);
 
-    //ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
-            //DRM_MODE_PAGE_FLIP_EVENT, NULL);
-    //if (ret) {
-        //fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n",
-                //dc.conn, errno);
-    //} else {
-        //dc.pflip_pending = true;
-    //}
+    auto ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
+            DRM_MODE_PAGE_FLIP_EVENT, NULL);
+    if (ret) {
+        fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n",
+                dc.conn, errno);
+    } else {
+        dc.pflip_pending = true;
+    }
 
     gettimeofday(&tm_end, NULL);
     float timeval = (tm_end.tv_sec - tm_start.tv_sec) +
@@ -263,8 +255,6 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
 {
     std::cerr << __func__ << " frame: " << frame << std::endl;
     dc.pflip_pending = false;
-    int *wait_pflip = (int*)data;
-    *wait_pflip = 0;
 }
 
 static void draw_loop()
@@ -280,15 +270,10 @@ static void draw_loop()
     ev.page_flip_handler = modeset_page_flip_event;
     
     while (1) {
-        int wait_pflip = 1;
         dc.pflip_pending = true;
         render();
 
-        drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
-                DRM_MODE_PAGE_FLIP_EVENT, &wait_pflip);
-
-        //while (dc.pflip_pending) {
-        while (wait_pflip) {
+        while (dc.pflip_pending) {
             FD_SET(0, &fds);
             FD_SET(fd, &fds);
 
@@ -374,6 +359,8 @@ int main(int argc,char* argv[])
 
 
     struct gbm_device *gbm = gbm_create_device(dc.fd);
+    printf("backend name: %s\n", gbm_device_get_backend_name(gbm));
+
     dc.gbmSurface = gbm_surface_create(gbm, dc.mode.hdisplay,
                       dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
                       GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);

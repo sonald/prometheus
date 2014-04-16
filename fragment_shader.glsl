@@ -10,11 +10,11 @@ void main()
     vec3 c = vec3(0);
     float y=0.;
     float x=0.;
-    for(int i = 0; i < 200; i++) {
+    for(int i = 0; i < 100; i++) {
             float t = float(i) * time * 0.5;
              x = 1. * cos(0.007*t);
              y = 1. * sin(t * 0.007);
-            vec2 o = 0.3 * vec2(x, y);
+            vec2 o = 0.1 * vec2(x, y);
             float r = fract(y+x);
             float g = 1. - r;
             c += 0.0007 / (length(p-o)) * vec3(r, g, x+y);
