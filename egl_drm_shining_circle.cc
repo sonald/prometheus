@@ -98,9 +98,9 @@ static void init(int width, int height)
     free(vertex_shader);
     free(frag_shader);
 
-    GLuint vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
+    //GLuint vao;
+    //glGenVertexArrays(1, &vao);
+    //glBindVertexArray(vao);
 
     GLuint vbo;
     glGenBuffers(1, &vbo);
@@ -142,14 +142,15 @@ static void init(int width, int height)
     glUniform3fv(glGetUniformLocation(program, "resolution"),
                  1, glm::value_ptr(resolution));
 
-    glClearColor(0.0, 0.0, 0.0, 0.7);
+    glClearColor(0.0, 0.0, 0.0, 1.0);
 }
 
 static struct timeval first_time = {0, 0};
 
 static void render_scene(int width, int height)
 {
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    //glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     struct timeval tm;
     gettimeofday(&tm, NULL);
@@ -174,9 +175,6 @@ struct DisplayContext {
     int fd;                                 //drm device handle
     EGLDisplay display;
 
-    unsigned int front_buf;
-    int bufs[2];
-
     drmModeModeInfo mode;
     uint32_t conn; // connector id
     uint32_t crtc; // crtc id
@@ -185,8 +183,6 @@ struct DisplayContext {
     EGLSurface surface;
 
     struct gbm_bo *bo;
-    uint32_t fb_id; 
-
     struct gbm_bo *next_bo;
     uint32_t next_fb_id; 
 
@@ -196,18 +192,32 @@ struct DisplayContext {
 
 static DisplayContext dc;
 
+static void drm_fb_destroy_callback(struct gbm_bo *bo, void *data)
+{
+    uint32_t fb_id = (uint32_t)(unsigned long)data;
+    drmModeRmFB(dc.fd, fb_id);
+    std::cerr << __func__ << " destroy fb " << fb_id << std::endl;
+}
+
+static uint32_t bo_to_fb(gbm_bo *bo)
+{
+    uint32_t handle = gbm_bo_get_handle(bo).u32;
+    uint32_t stride = gbm_bo_get_stride(bo);
+    int width = gbm_bo_get_width(bo);
+    int height = gbm_bo_get_height(bo);
+
+    uint32_t fb_id = 0;
+    int ret = drmModeAddFB(dc.fd, width, height, 24, 32, stride, handle, &fb_id);
+    gbm_bo_set_user_data(bo, (void*)(unsigned long)fb_id, drm_fb_destroy_callback);
+    printf("add new fb = %u\n", fb_id);
+    if(ret) { printf("Could not add framebuffer(%d)!", errno); exit(0); }
+    return fb_id;
+}
+
 static void render()
 {
     struct timeval tm_start, tm_end;
     gettimeofday(&tm_start ,NULL);
-
-    uint32_t handle, stride;
-    int ret;
-
-
-    //drmModeRmFB(dc.fd, dc.fb_id);
-    gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
-    dc.bo = dc.next_bo;
 
     render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
 
@@ -216,29 +226,30 @@ static void render()
         exit(-1);
     }
 
-    struct gbm_bo* bo = dc.next_bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    dc.next_bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    printf("next_bo = %lu\n", (unsigned long)dc.next_bo);
     if (!dc.next_bo) {
         printf("cannot lock front buffer during creation");
         exit(-1);
     }
 
-    handle = gbm_bo_get_handle(bo).u32;
-    stride = gbm_bo_get_stride(bo);
-    int width = gbm_bo_get_width(bo);
-    int height = gbm_bo_get_height(bo);
+    uint32_t bo_fb = (uint32_t)(unsigned long)gbm_bo_get_user_data(dc.next_bo);
+    if (bo_fb) {
+        dc.next_fb_id = bo_fb;
 
-    ret = drmModeAddFB(dc.fd, width, height, 32, 32, stride, handle, &dc.next_fb_id);
-    if(ret) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
-    printf("handle: %ud, dc.next_fb_id = %u\n", handle, dc.next_fb_id);
-    //ret = drmModeSetCrtc(dc.fd, dc.crtc, dc.next_fb_id, 0, 0, &dc.conn, 1, &dc.mode);
-    //if(ret) { printf("Could not set mode!"); exit(0); }
-
-    ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, DRM_MODE_PAGE_FLIP_EVENT, NULL);
-    if (ret) {
-        fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n", dc.conn, errno);
     } else {
-        dc.pflip_pending = true;
+        dc.next_fb_id = bo_to_fb(dc.next_bo);
     }
+    printf("dc.next_fb_id = %u\n", dc.next_fb_id);
+
+    //ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
+            //DRM_MODE_PAGE_FLIP_EVENT, NULL);
+    //if (ret) {
+        //fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n",
+                //dc.conn, errno);
+    //} else {
+        //dc.pflip_pending = true;
+    //}
 
     gettimeofday(&tm_end, NULL);
     float timeval = (tm_end.tv_sec - tm_start.tv_sec) +
@@ -250,9 +261,10 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
         unsigned int sec, unsigned int usec,
         void *data)
 {
-    std::cerr << __PRETTY_FUNCTION__ << "frame: " << frame << std::endl;
+    std::cerr << __func__ << " frame: " << frame << std::endl;
     dc.pflip_pending = false;
-    render();
+    int *wait_pflip = (int*)data;
+    *wait_pflip = 0;
 }
 
 static void draw_loop()
@@ -260,38 +272,46 @@ static void draw_loop()
     int fd = dc.fd;
     int ret;
     fd_set fds;
-    time_t start, cur;
-    struct timeval v;
     drmEventContext ev;
 
-    /* init variables */
-    srand(time(&start));
     FD_ZERO(&fds);
-    memset(&v, 0, sizeof(v));
     memset(&ev, 0, sizeof(ev));
     ev.version = DRM_EVENT_CONTEXT_VERSION;
     ev.page_flip_handler = modeset_page_flip_event;
+    
+    while (1) {
+        int wait_pflip = 1;
+        dc.pflip_pending = true;
+        render();
 
-    render();
+        drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
+                DRM_MODE_PAGE_FLIP_EVENT, &wait_pflip);
 
-    int duration = 20;
-    /* wait 5s for VBLANK or input events */
-    while (time(&cur) < start + duration) {
-        FD_SET(0, &fds);
-        FD_SET(fd, &fds);
-        v.tv_sec = start + duration - cur;
+        //while (dc.pflip_pending) {
+        while (wait_pflip) {
+            FD_SET(0, &fds);
+            FD_SET(fd, &fds);
 
-        ret = select(fd + 1, &fds, NULL, NULL, &v);
-        if (ret < 0) {
-            fprintf(stderr, "select() failed with %d: %m\n", errno);
-            break;
-        } else if (FD_ISSET(0, &fds)) {
-            fprintf(stderr, "exit due to user-input\n");
-            break;
-        } else if (FD_ISSET(fd, &fds)) {
-            std::cerr << "handle event" << std::endl;
-            drmHandleEvent(fd, &ev);
+            struct timeval tv { 0, 100 };
+            ret = select(fd + 1, &fds, NULL, NULL, &tv);
+            if (ret < 0) {
+                fprintf(stderr, "select() failed with %d: %m\n", errno);
+                break;
+            } else if (FD_ISSET(0, &fds)) {
+                fprintf(stderr, "exit due to user-input\n");
+                return;
+
+            } else if (FD_ISSET(fd, &fds)) {
+                std::cerr << "handle event" << std::endl;
+                drmHandleEvent(fd, &ev);
+            }
         }
+
+        if (dc.next_bo) {
+            gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
+            dc.bo = dc.next_bo;
+        }
+
     }
 }
 
@@ -303,40 +323,9 @@ int main(int argc,char* argv[])
     drmModeEncoder* encoder;                //encoder array
 
     //open default dri device
-    dc.fd = open("/dev/dri/card0",O_RDWR | O_CLOEXEC);
+    //dc.fd = open("/dev/dri/card0",O_RDWR | O_CLOEXEC|O_NONBLOCK);
+    dc.fd = drmOpen("i915", NULL);
     if(dc.fd<=0) { printf("Couldn't open /dev/dri/card0"); exit(0); }
-
-    struct gbm_device *gbm = gbm_create_device(dc.fd);
-
-    EGLint major;
-    EGLint minor;
-    const char *ver, *extensions;
-
-    static const EGLint conf_att[] = {
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-        EGL_RED_SIZE, 1,
-        EGL_GREEN_SIZE, 1,
-        EGL_BLUE_SIZE, 1,
-        EGL_ALPHA_SIZE, 1,
-        EGL_NONE,
-    };
-    static const EGLint ctx_att[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 2,
-        EGL_NONE
-    };
-
-    dc.display = eglGetDisplay(gbm);
-    eglInitialize(dc.display, &major, &minor);
-    ver = eglQueryString(dc.display, EGL_VERSION);
-    extensions = eglQueryString(dc.display, EGL_EXTENSIONS);
-    fprintf(stderr, "ver: %s, ext: %s\n", ver, extensions);
-
-    if (!strstr(extensions, "EGL_KHR_surfaceless_context")) {
-        fprintf(stderr, "%s\n", "need EGL_KHR_surfaceless_context extension");
-        exit(1);
-    }
-
 
     //acquire drm resources
     resources = drmModeGetResources(dc.fd);
@@ -379,11 +368,56 @@ int main(int argc,char* argv[])
     if(i==connector->count_modes) {
         printf("Requested mode not found!"); exit(0); 
     }
-    printf("found mode: %d, %d\n", dc.mode.hdisplay, dc.mode.vdisplay);
+    printf("\tMode chosen [%s] : Clock => %d, Vertical refresh => %d, Type => %d\n",
+            dc.mode.name, dc.mode.clock, dc.mode.vrefresh, dc.mode.type);
+
+
+
+    struct gbm_device *gbm = gbm_create_device(dc.fd);
+    dc.gbmSurface = gbm_surface_create(gbm, dc.mode.hdisplay,
+                      dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
+                      GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
+    if (!dc.gbmSurface) {
+        printf("cannot create gbm surface (%d): %m", errno);
+        exit(-EFAULT);
+    }
+
+
+    EGLint major;
+    EGLint minor;
+    const char *ver, *extensions;
+
+    static const EGLint conf_att[] = {
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+        EGL_RED_SIZE, 1,
+        EGL_GREEN_SIZE, 1,
+        EGL_BLUE_SIZE, 1,
+        EGL_ALPHA_SIZE, 0,
+        EGL_NONE,
+    };
+    static const EGLint ctx_att[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 2,
+        EGL_NONE
+    };
+
+    dc.display = eglGetDisplay(gbm);
+    eglInitialize(dc.display, &major, &minor);
+    ver = eglQueryString(dc.display, EGL_VERSION);
+    extensions = eglQueryString(dc.display, EGL_EXTENSIONS);
+    fprintf(stderr, "ver: %s, ext: %s\n", ver, extensions);
+
+    if (!strstr(extensions, "EGL_KHR_surfaceless_context")) {
+        fprintf(stderr, "%s\n", "need EGL_KHR_surfaceless_context extension");
+        exit(1);
+    }
+
+    if (!eglBindAPI(EGL_OPENGL_ES_API)) {
+        std::cerr << "bind api failed" << std::endl;
+        exit(-1);
+    }
 
     EGLContext ctx;
-    eglBindAPI(EGL_OPENGL_ES2_BIT);
-
     EGLConfig conf;
     int num_conf;
     EGLBoolean ret = eglChooseConfig(dc.display, conf_att, &conf, 1, &num_conf);
@@ -395,15 +429,6 @@ int main(int argc,char* argv[])
     ctx = eglCreateContext(dc.display, conf, EGL_NO_CONTEXT, ctx_att);
     if (ctx == EGL_NO_CONTEXT) {
         printf("no context created.\n"); exit(0);
-    }
-    //eglMakeCurrent(dc.display, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx);
-
-    dc.gbmSurface = gbm_surface_create(gbm, dc.mode.hdisplay,
-                      dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
-                      GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
-    if (!dc.gbmSurface) {
-        printf("cannot create gbm surface (%d): %m", errno);
-        exit(-EFAULT);
     }
 
     dc.surface = eglCreateWindowSurface(dc.display, conf,
@@ -419,11 +444,6 @@ int main(int argc,char* argv[])
         exit(-1);
     }
 
-    if (!gbm_surface_has_free_buffers(dc.gbmSurface)) {
-        printf("has no free buffers.");
-        exit(-1);
-    }
-
     init(dc.mode.hdisplay, dc.mode.vdisplay);
 
     if (!eglSwapBuffers(dc.display, dc.surface)) {
@@ -431,22 +451,15 @@ int main(int argc,char* argv[])
         exit(-1);
     }
 
-    struct gbm_bo* bo = dc.bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    dc.bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    printf("first_bo = %lu\n", (unsigned long)dc.bo);
     if (!dc.bo) {
         printf("cannot lock front buffer during creation");
         exit(-1);
     }
 
-    uint32_t handle, stride;
-    handle = gbm_bo_get_handle(bo).u32;
-    stride = gbm_bo_get_stride(bo);
-    int width = gbm_bo_get_width(bo);
-    int height = gbm_bo_get_height(bo);
-
-    ret = drmModeAddFB(dc.fd, width, height, 32, 32, stride, handle, &dc.fb_id);
-    if(ret) { printf("Could not add framebuffer(%d)!", errno); perror("fb"); exit(0); }
-    printf("handle: %ud, dc.fb_id = %u\n", handle, dc.fb_id);
-    ret = drmModeSetCrtc(dc.fd, dc.crtc, dc.fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+    uint32_t fb_id = bo_to_fb(dc.bo);
+    ret = drmModeSetCrtc(dc.fd, dc.crtc, fb_id, 0, 0, &dc.conn, 1, &dc.mode);
     if(ret) { printf("Could not set mode!"); exit(0); }
 
     draw_loop();

@@ -9,7 +9,7 @@ objs=$(patsubst %.cc,%,$(wilcard *.cc))
 all: $(objs)
 
 egl_drm_shining_circle: egl_drm_shining_circle.cc
-		clang++ -x c++ -std=c++11 $(CXXFLAGS2) -o $@ $^ $(LDFLAGS2)
+		clang++ -Wall -x c++ -std=c++11 $(CXXFLAGS2) -o $@ $^ $(LDFLAGS2)
 	
 
 %: %.cc
