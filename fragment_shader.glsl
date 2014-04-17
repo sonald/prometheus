@@ -5,12 +5,12 @@ uniform vec3 resolution;
 void main()
 {
     vec2 p = (gl_FragCoord.xy - 0.5* resolution.xy) / min(resolution.x, resolution.y);
-    vec2 t = vec2(gl_FragCoord.xy / resolution.xy);
 
     vec3 c = vec3(0);
     float y=0.;
     float x=0.;
-    for(int i = 0; i < 200; i++) {
+    int total = min(200, int(time*10.0)+1);
+    for(int i = 0; i < total; i++) {
             float t = float(i) * time * 0.5;
              x = 1. * cos(0.007*t);
              y = 1. * sin(t * 0.007);
