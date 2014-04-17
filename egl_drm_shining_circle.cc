@@ -37,6 +37,28 @@ using namespace std;
 #define YRES 600
 #define BPP  32
 
+struct DisplayContext {
+    int fd;                                 //drm device handle
+    EGLDisplay display;
+
+    drmModeModeInfo mode;
+    uint32_t conn; // connector id
+    uint32_t crtc; // crtc id
+
+    struct gbm_surface *gbmSurface;
+    EGLSurface surface;
+
+    struct gbm_bo *bo;
+    struct gbm_bo *next_bo;
+    uint32_t next_fb_id; 
+
+    bool pflip_pending;
+    bool cleanup;
+};
+
+static DisplayContext dc;
+
+
 static GLuint create_shader(GLenum type, const char *source)
 {
     GLuint shader_id = glCreateShader(type);
@@ -162,28 +184,6 @@ static void render_scene(int width, int height)
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
-
-struct DisplayContext {
-    int fd;                                 //drm device handle
-    EGLDisplay display;
-
-    drmModeModeInfo mode;
-    uint32_t conn; // connector id
-    uint32_t crtc; // crtc id
-
-    struct gbm_surface *gbmSurface;
-    EGLSurface surface;
-
-    struct gbm_bo *bo;
-    struct gbm_bo *next_bo;
-    uint32_t next_fb_id; 
-
-    bool pflip_pending;
-    bool cleanup;
-};
-
-static DisplayContext dc;
-
 static void drm_fb_destroy_callback(struct gbm_bo *bo, void *data)
 {
     uint32_t fb_id = (uint32_t)(unsigned long)data;
@@ -212,7 +212,6 @@ static void render()
     gettimeofday(&tm_start ,NULL);
 
     render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
-
     if (!eglSwapBuffers(dc.display, dc.surface)) {
         printf("cannot swap buffers");
         exit(-1);
@@ -308,8 +307,8 @@ int main(int argc,char* argv[])
     drmModeEncoder* encoder;                //encoder array
 
     //open default dri device
-    //dc.fd = open("/dev/dri/card0",O_RDWR | O_CLOEXEC|O_NONBLOCK);
-    dc.fd = drmOpen("i915", NULL);
+    dc.fd = open("/dev/dri/card0",O_RDWR | O_CLOEXEC|O_NONBLOCK);
+    //dc.fd = drmOpen("radeon", NULL);
     if(dc.fd<=0) { printf("Couldn't open /dev/dri/card0"); exit(0); }
 
     //acquire drm resources
@@ -324,6 +323,7 @@ int main(int argc,char* argv[])
         if(connector==0) { continue; }
         if(connector->connection==DRM_MODE_CONNECTED && connector->count_modes>0) {
             dc.conn = connector->connector_id;
+            std::cerr << "find connected connector id " << dc.conn << std::endl;
             break; 
         }
         drmModeFreeConnector(connector);
@@ -332,17 +332,33 @@ int main(int argc,char* argv[])
         printf("No active connector found!"); exit(0); 
     }
 
-    //acquire drm encoder
-    for(i=0;i<resources->count_encoders;++i) {
-        encoder = drmModeGetEncoder(dc.fd,resources->encoders[i]);
-        if(encoder==0) { continue; }
-        if(encoder->encoder_id==connector->encoder_id) { break; }
-        drmModeFreeEncoder(encoder);
+    encoder = NULL;
+    if (connector->encoder_id) {
+        encoder = drmModeGetEncoder(dc.fd, connector->encoder_id);
+        if(encoder) {
+            dc.crtc = encoder->crtc_id;
+            drmModeFreeEncoder(encoder);
+        }
     }
-    if(i==resources->count_encoders) {
-        printf("No active encoder found!"); exit(0); 
+
+    if (!encoder) {
+        for(i=0;i<resources->count_encoders;++i) {
+            encoder = drmModeGetEncoder(dc.fd,resources->encoders[i]);
+            if(encoder==0) { continue; }
+            for (int j = 0; j < resources->count_crtcs; ++j) {
+                if (encoder->possible_crtcs & (1<<j)) {
+                    dc.crtc = resources->crtcs[j];
+                    break;
+                }
+            }
+            drmModeFreeEncoder(encoder);
+            if (dc.crtc) break;
+        }
+
+        if(i==resources->count_encoders) {
+            printf("No active encoder found!"); exit(0); 
+        }
     }
-    dc.crtc = encoder->crtc_id;
 
     //check for requested mode
     //for(i=0;i<connector->count_modes;++i) {
@@ -451,7 +467,6 @@ int main(int argc,char* argv[])
 
     draw_loop();
 
-    drmModeFreeEncoder(encoder);
     drmModeFreeConnector(connector);
     drmModeFreeResources(resources);
     close(dc.fd);
