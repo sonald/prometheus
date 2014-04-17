@@ -4,6 +4,7 @@
 #include <sys/time.h>
 #include <string.h>
 #include <fcntl.h>
+#include <cstdarg>
 #include <unistd.h>
 
 #include <iostream>
@@ -31,12 +32,18 @@ using namespace std;
 struct DisplayContext {
     int fd;                                 //drm device handle
     EGLDisplay display;
+    EGLContext gl_context;
+
+    GLuint vbo;
+    GLuint vertexShaderId, fragShaderId, program;
 
     drmModeModeInfo mode;
     uint32_t conn; // connector id
     uint32_t crtc; // crtc id
+    drmModeCrtc *old_crtc;
 
-    struct gbm_surface *gbmSurface;
+    struct gbm_device *gbm;
+    struct gbm_surface *gbm_surface;
     EGLSurface surface;
 
     struct gbm_bo *bo;
@@ -48,6 +55,15 @@ struct DisplayContext {
 };
 
 static DisplayContext dc;
+
+static void err_quit(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    exit(-1);
+    va_end(ap);
+}
 
 static GLuint create_shader(GLenum type, const char *source)
 {
@@ -71,17 +87,18 @@ static GLuint create_shader(GLenum type, const char *source)
     return shader_id;
 }
 
-static GLuint vertexShaderId, fragShaderId, program;
 
 static GLuint create_program(const char *vertexShader, const char *fragShader)
 {
-    vertexShaderId = create_shader(GL_VERTEX_SHADER, vertexShader);
-    fragShaderId = create_shader(GL_FRAGMENT_SHADER, fragShader);
-    if (vertexShaderId == 0 || fragShaderId == 0) return 0;
+    dc.vertexShaderId = create_shader(GL_VERTEX_SHADER, vertexShader);
+    dc.fragShaderId = create_shader(GL_FRAGMENT_SHADER, fragShader);
+    if (dc.vertexShaderId == 0 || dc.fragShaderId == 0) {
+        err_quit("create_program failed\n");
+    }
 
-    program = glCreateProgram();
-    glAttachShader(program, vertexShaderId);
-    glAttachShader(program, fragShaderId);
+    GLuint program = glCreateProgram();
+    glAttachShader(program, dc.vertexShaderId);
+    glAttachShader(program, dc.fragShaderId);
     return program;
 }
 
@@ -112,14 +129,12 @@ static void init_gl(int argc, const char** argv)
         frag_shader = load_shader("fragment_shader.glsl");
     }
 
-    program = create_program(vertex_shader, frag_shader);
-    if (!program) return;
+    dc.program = create_program(vertex_shader, frag_shader);
     free(vertex_shader);
     free(frag_shader);
 
-    GLuint vbo;
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glGenBuffers(1, &dc.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, dc.vbo);
 
     GLfloat vertex_data[] = {
         -1.0, -1.0,
@@ -133,20 +148,20 @@ static void init_gl(int argc, const char** argv)
 
     glBufferData(GL_ARRAY_BUFFER, sizeof vertex_data, vertex_data, GL_STATIC_DRAW);
 
-    glLinkProgram(program);
-    glUseProgram(program);
+    glLinkProgram(dc.program);
+    glUseProgram(dc.program);
 
-    GLint pos_attrib = glGetAttribLocation(program, "position");
+    GLint pos_attrib = glGetAttribLocation(dc.program, "position");
     glEnableVertexAttribArray(pos_attrib);
     glVertexAttribPointer(pos_attrib, 2, GL_FLOAT, GL_FALSE, 0, NULL);
 
     //projection
-    GLint projMId = glGetUniformLocation(program, "projM");
+    GLint projMId = glGetUniformLocation(dc.program, "projM");
     glm::mat4 projM = glm::perspective(60.0f, width / height, 1.0f, 10.0f);
     glUniformMatrix4fv(projMId, 1, GL_FALSE, glm::value_ptr(projM));
 
     //view
-    GLint viewMId = glGetUniformLocation(program, "viewM");
+    GLint viewMId = glGetUniformLocation(dc.program, "viewM");
     auto viewM = glm::lookAt(
         glm::vec3(1.0f, 1.0f, 1.0f),
         glm::vec3(0.0f, 0.0f, 0.0f),
@@ -154,7 +169,7 @@ static void init_gl(int argc, const char** argv)
     glUniformMatrix4fv(viewMId, 1, GL_FALSE, glm::value_ptr(viewM));
 
     auto resolution = glm::vec3(width, height, 1.0);
-    glUniform3fv(glGetUniformLocation(program, "resolution"),
+    glUniform3fv(glGetUniformLocation(dc.program, "resolution"),
                  1, glm::value_ptr(resolution));
 
     glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -173,7 +188,7 @@ static void render_scene(int width, int height)
 
     float timeval = (tm.tv_sec - first_time.tv_sec) +
         (tm.tv_usec - first_time.tv_usec) / 1000000.0;
-    GLint time = glGetUniformLocation(program, "time");
+    GLint time = glGetUniformLocation(dc.program, "time");
     glUniform1f(time, timeval);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -212,7 +227,7 @@ static void render()
         exit(-1);
     }
 
-    dc.next_bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    dc.next_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
     printf("next_bo = %lu\n", (unsigned long)dc.next_bo);
     if (!dc.next_bo) {
         printf("cannot lock front buffer during creation");
@@ -287,7 +302,7 @@ static void draw_loop()
         }
 
         if (dc.next_bo) {
-            gbm_surface_release_buffer(dc.gbmSurface, dc.bo);
+            gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
             dc.bo = dc.next_bo;
         }
 
@@ -296,34 +311,37 @@ static void draw_loop()
 
 static void setup_drm()
 {
-    //drm system variables
     drmModeRes* resources;                  //resource array
     drmModeConnector* connector;            //connector array
     drmModeEncoder* encoder;                //encoder array
 
     //open default dri device
-    dc.fd = open("/dev/dri/card0",O_RDWR | O_CLOEXEC|O_NONBLOCK);
-    if(dc.fd<=0) { printf("Couldn't open /dev/dri/card0"); exit(0); }
+    dc.fd = open("/dev/dri/card0", O_RDWR|O_CLOEXEC|O_NONBLOCK);
+    if (dc.fd <= 0) { 
+        err_quit(strerror(errno));
+    }
 
     //acquire drm resources
     resources = drmModeGetResources(dc.fd);
-    if(resources==0) { printf("drmModeGetResources failed"); exit(0); }
-
+    if(resources == 0) {
+        err_quit("drmModeGetResources failed");
+    }
 
     int i;
     //acquire drm connector
-    for(i=0;i<resources->count_connectors;++i) {
+    for (i = 0; i < resources->count_connectors; ++i) {
         connector = drmModeGetConnector(dc.fd,resources->connectors[i]);
-        if(connector==0) { continue; }
-        if(connector->connection==DRM_MODE_CONNECTED && connector->count_modes>0) {
+        if (!connector) continue;
+        if (connector->connection == DRM_MODE_CONNECTED && connector->count_modes > 0) {
             dc.conn = connector->connector_id;
             std::cerr << "find connected connector id " << dc.conn << std::endl;
             break; 
         }
         drmModeFreeConnector(connector);
     }
-    if (i==resources->count_connectors) {
-        printf("No active connector found!"); exit(0); 
+
+    if (i == resources->count_connectors) {
+        err_quit("No active connector found!");
     }
 
     encoder = NULL;
@@ -336,7 +354,7 @@ static void setup_drm()
     }
 
     if (!encoder) {
-        for(i=0;i<resources->count_encoders;++i) {
+        for(i = 0; i < resources->count_encoders; ++i) {
             encoder = drmModeGetEncoder(dc.fd,resources->encoders[i]);
             if(encoder==0) { continue; }
             for (int j = 0; j < resources->count_crtcs; ++j) {
@@ -349,20 +367,12 @@ static void setup_drm()
             if (dc.crtc) break;
         }
 
-        if(i==resources->count_encoders) {
-            printf("No active encoder found!"); exit(0); 
+        if (i == resources->count_encoders) {
+            err_quit("No active encoder found!");
         }
     }
 
-    //check for requested mode
-    //for(i=0;i<connector->count_modes;++i) {
-        //dc.mode = connector->modes[i];
-        //if( (dc.mode.hdisplay==XRES) && (dc.mode.vdisplay==YRES) ) { break; }
-    //}
     dc.mode = connector->modes[0];
-    if(i==connector->count_modes) {
-        printf("Requested mode not found!"); exit(0); 
-    }
     printf("\tMode chosen [%s] : Clock => %d, Vertical refresh => %d, Type => %d\n",
             dc.mode.name, dc.mode.clock, dc.mode.vrefresh, dc.mode.type);
 
@@ -372,13 +382,13 @@ static void setup_drm()
 
 static void setup_egl()
 {
-    struct gbm_device *gbm = gbm_create_device(dc.fd);
-    printf("backend name: %s\n", gbm_device_get_backend_name(gbm));
+    dc.gbm = gbm_create_device(dc.fd);
+    printf("backend name: %s\n", gbm_device_get_backend_name(dc.gbm));
 
-    dc.gbmSurface = gbm_surface_create(gbm, dc.mode.hdisplay,
+    dc.gbm_surface = gbm_surface_create(dc.gbm, dc.mode.hdisplay,
                       dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
                       GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
-    if (!dc.gbmSurface) {
+    if (!dc.gbm_surface) {
         printf("cannot create gbm surface (%d): %m", errno);
         exit(-EFAULT);
     }
@@ -402,7 +412,7 @@ static void setup_egl()
         EGL_NONE
     };
 
-    dc.display = eglGetDisplay(gbm);
+    dc.display = eglGetDisplay(dc.gbm);
     eglInitialize(dc.display, &major, &minor);
     ver = eglQueryString(dc.display, EGL_VERSION);
     extensions = eglQueryString(dc.display, EGL_EXTENSIONS);
@@ -418,7 +428,6 @@ static void setup_egl()
         exit(-1);
     }
 
-    EGLContext ctx;
     EGLConfig conf;
     int num_conf;
     EGLBoolean ret = eglChooseConfig(dc.display, conf_att, &conf, 1, &num_conf);
@@ -427,20 +436,20 @@ static void setup_egl()
         exit(-1);
     }
 
-    ctx = eglCreateContext(dc.display, conf, EGL_NO_CONTEXT, ctx_att);
-    if (ctx == EGL_NO_CONTEXT) {
+    dc.gl_context = eglCreateContext(dc.display, conf, EGL_NO_CONTEXT, ctx_att);
+    if (dc.gl_context == EGL_NO_CONTEXT) {
         printf("no context created.\n"); exit(0);
     }
 
     dc.surface = eglCreateWindowSurface(dc.display, conf,
-                          (EGLNativeWindowType)dc.gbmSurface,
+                          (EGLNativeWindowType)dc.gbm_surface,
                           NULL);
     if (dc.surface == EGL_NO_SURFACE) {
         printf("cannot create EGL window surface");
         exit(-1);
     }
 
-    if (!eglMakeCurrent(dc.display, dc.surface, dc.surface, ctx)) {
+    if (!eglMakeCurrent(dc.display, dc.surface, dc.surface, dc.gl_context)) {
         printf("cannot activate EGL context");
         exit(-1);
     }
@@ -448,6 +457,19 @@ static void setup_egl()
 
 static void cleanup()
 {
+    glDeleteBuffers(1, &dc.vbo);
+    glDeleteShader(dc.vertexShaderId);
+    glDeleteShader(dc.fragShaderId);
+    glDeleteProgram(dc.program);
+
+    eglDestroySurface(dc.display, dc.surface);
+    eglDestroyContext(dc.display, dc.gl_context);
+    eglTerminate(dc.display);
+        
+    gbm_surface_destroy(dc.gbm_surface);
+    gbm_device_destroy(dc.gbm);
+
+
     close(dc.fd);
 }
 
@@ -462,7 +484,7 @@ int main(int argc, const char* argv[])
         exit(-1);
     }
 
-    dc.bo = gbm_surface_lock_front_buffer(dc.gbmSurface);
+    dc.bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
     printf("first_bo = %lu\n", (unsigned long)dc.bo);
     if (!dc.bo) {
         printf("cannot lock front buffer during creation");
