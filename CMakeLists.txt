@@ -14,7 +14,6 @@ pkg_check_modules(GLESV2 REQUIRED glesv2)
 pkg_check_modules(LIBDRM REQUIRED libdrm)
 pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GBM REQUIRED gbm)
-pkg_check_modules(GLFW3 REQUIRED glfw3)
 
 # Find includes in corresponding build directories
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -35,4 +34,4 @@ file(GLOB SRCS "${PROJECT_SOURCE_DIR}/*.cc")
 add_executable(${target} ${SRCS})
 
 target_link_libraries(${target} ${GLESV2_LIBRARIES} ${EGL_LIBRARIES}
-    ${GBM_LIBRARIES} ${LIBDRM_LIBRARIES} ${GLFW3_LIBRARIES})
+    ${GBM_LIBRARIES} ${LIBDRM_LIBRARIES})

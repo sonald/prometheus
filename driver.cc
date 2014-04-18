@@ -16,8 +16,6 @@ using namespace std;
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-#include <GLFW/glfw3.h>
-
 #include <gbm.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
@@ -291,7 +289,6 @@ static void draw_loop()
     ev.page_flip_handler = modeset_page_flip_event;
     ev.vblank_handler = modeset_vblank_handler;
     
-    bool first = true;
     while (1) {
         dc.pflip_pending = true;
 
