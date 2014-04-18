@@ -9,7 +9,7 @@ void main()
     vec3 c = vec3(0);
     float y=0.;
     float x=0.;
-    int total = min(200, int(time*10.0)+1);
+    int total = min(200, int(time*30.0)+1);
     for(int i = 0; i < total; i++) {
             float t = float(i) * time * 0.5;
              x = 1. * cos(0.007*t);

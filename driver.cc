@@ -48,6 +48,7 @@ struct DisplayContext {
 
     struct gbm_bo *bo;
     struct gbm_bo *next_bo;
+    struct gbm_bo *third_bo;
     uint32_t next_fb_id; 
 
     bool pflip_pending;
@@ -227,19 +228,24 @@ static void render()
         exit(-1);
     }
 
-    dc.next_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
-    printf("next_bo = %lu\n", (unsigned long)dc.next_bo);
-    if (!dc.next_bo) {
+    struct gbm_bo *bo;
+    if (!dc.next_bo) 
+        bo = dc.next_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
+    else 
+        bo = dc.third_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
+
+    //printf("next_bo = %lu\n", (unsigned long)dc.next_bo);
+    printf("next_bo = %lu\n", (unsigned long)bo);
+    if (!bo) {
         printf("cannot lock front buffer during creation");
         exit(-1);
     }
 
-    uint32_t bo_fb = (uint32_t)(unsigned long)gbm_bo_get_user_data(dc.next_bo);
+    uint32_t bo_fb = (uint32_t)(unsigned long)gbm_bo_get_user_data(bo);
     if (bo_fb) {
         dc.next_fb_id = bo_fb;
-
     } else {
-        dc.next_fb_id = bo_to_fb(dc.next_bo);
+        dc.next_fb_id = bo_to_fb(bo);
     }
     printf("dc.next_fb_id = %u\n", dc.next_fb_id);
 
@@ -266,6 +272,12 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
     dc.pflip_pending = false;
 }
 
+static void modeset_vblank_handler(int fd, unsigned int sequence, 
+        unsigned int tv_sec, unsigned int tv_usec, void *user_data)
+{
+    std::cerr << __func__ << " sequence: " << sequence << std::endl;
+}
+
 static void draw_loop()
 {
     int fd = dc.fd;
@@ -277,9 +289,13 @@ static void draw_loop()
     memset(&ev, 0, sizeof(ev));
     ev.version = DRM_EVENT_CONTEXT_VERSION;
     ev.page_flip_handler = modeset_page_flip_event;
+    ev.vblank_handler = modeset_vblank_handler;
     
+    bool first = true;
     while (1) {
         dc.pflip_pending = true;
+
+        render();
         render();
 
         while (dc.pflip_pending) {
@@ -301,9 +317,12 @@ static void draw_loop()
             }
         }
 
-        if (dc.next_bo) {
+        if (dc.third_bo) {
             gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
             dc.bo = dc.next_bo;
+            gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
+            dc.bo = dc.third_bo;
+            dc.next_bo = NULL;
         }
 
     }
@@ -407,6 +426,7 @@ static void setup_egl()
         EGL_GREEN_SIZE, 1,
         EGL_BLUE_SIZE, 1,
         EGL_ALPHA_SIZE, 0,
+        EGL_DEPTH_SIZE, 1,
         EGL_NONE,
     };
     static const EGLint ctx_att[] = {
