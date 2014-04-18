@@ -40,7 +40,7 @@ struct DisplayContext {
     drmModeModeInfo mode;
     uint32_t conn; // connector id
     uint32_t crtc; // crtc id
-    drmModeCrtc *old_crtc;
+    drmModeCrtc *saved_crtc;
 
     struct gbm_device *gbm;
     struct gbm_surface *gbm_surface;
@@ -372,6 +372,8 @@ static void setup_drm()
         }
     }
 
+    dc.saved_crtc = drmModeGetCrtc(dc.fd, dc.crtc);
+
     dc.mode = connector->modes[0];
     printf("\tMode chosen [%s] : Clock => %d, Vertical refresh => %d, Type => %d\n",
             dc.mode.name, dc.mode.clock, dc.mode.vrefresh, dc.mode.type);
@@ -469,7 +471,11 @@ static void cleanup()
     gbm_surface_destroy(dc.gbm_surface);
     gbm_device_destroy(dc.gbm);
 
-
+    if (dc.saved_crtc) {
+        drmModeSetCrtc(dc.fd, dc.saved_crtc->crtc_id, dc.saved_crtc->buffer_id, 
+                dc.saved_crtc->x, dc.saved_crtc->y, &dc.conn, 1, &dc.saved_crtc->mode);
+        drmModeFreeCrtc(dc.saved_crtc);
+    }
     close(dc.fd);
 }
 
