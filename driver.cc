@@ -46,7 +46,6 @@ struct DisplayContext {
 
     struct gbm_bo *bo;
     struct gbm_bo *next_bo;
-    struct gbm_bo *third_bo;
     uint32_t next_fb_id; 
 
     bool pflip_pending;
@@ -226,13 +225,7 @@ static void render()
         exit(-1);
     }
 
-    struct gbm_bo *bo;
-    if (!dc.next_bo) 
-        bo = dc.next_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
-    else 
-        bo = dc.third_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
-
-    //printf("next_bo = %lu\n", (unsigned long)dc.next_bo);
+    struct gbm_bo *bo = dc.next_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
     printf("next_bo = %lu\n", (unsigned long)bo);
     if (!bo) {
         printf("cannot lock front buffer during creation");
@@ -291,8 +284,6 @@ static void draw_loop()
     
     while (1) {
         dc.pflip_pending = true;
-
-        render();
         render();
 
         while (dc.pflip_pending) {
@@ -314,14 +305,10 @@ static void draw_loop()
             }
         }
 
-        if (dc.third_bo) {
+        if (dc.next_bo) {
             gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
             dc.bo = dc.next_bo;
-            gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
-            dc.bo = dc.third_bo;
-            dc.next_bo = NULL;
         }
-
     }
 }
 
