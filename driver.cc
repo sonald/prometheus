@@ -13,44 +13,9 @@
 
 using namespace std;
 
-#include <xf86drm.h>
-#include <xf86drmMode.h>
-
-#include <gbm.h>
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-
-#include <EGL/egl.h>
-
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-
-struct DisplayContext {
-    int fd;                                 //drm device handle
-    EGLDisplay display;
-    EGLContext gl_context;
-
-    GLuint vbo;
-    GLuint vertexShaderId, fragShaderId, program;
-
-    drmModeModeInfo mode;
-    uint32_t conn; // connector id
-    uint32_t crtc; // crtc id
-    drmModeCrtc *saved_crtc;
-
-    struct gbm_device *gbm;
-    struct gbm_surface *gbm_surface;
-    EGLSurface surface;
-
-    struct gbm_bo *bo;
-    struct gbm_bo *next_bo;
-    uint32_t next_fb_id; 
-
-    bool pflip_pending;
-    bool cleanup;
-};
+#include "scene.h"
+#include "atlas.h"
+#include "driver.h"
 
 static DisplayContext dc;
 
@@ -61,135 +26,6 @@ static void err_quit(const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     exit(-1);
     va_end(ap);
-}
-
-static GLuint create_shader(GLenum type, const char *source)
-{
-    GLuint shader_id = glCreateShader(type);
-    if (!shader_id) {
-        return 0;
-    }
-
-    glShaderSource(shader_id, 1, &source, NULL);
-    glCompileShader(shader_id);
-
-    GLint compile_ret;
-    glGetShaderiv(shader_id, GL_COMPILE_STATUS, &compile_ret);
-    if (compile_ret == GL_FALSE) {
-        char buf[512];
-        glGetShaderInfoLog(shader_id, sizeof buf - 1, NULL, buf);
-        fprintf(stderr, "%s\n", buf);
-        return 0;
-    }
-
-    return shader_id;
-}
-
-
-static GLuint create_program(const char *vertexShader, const char *fragShader)
-{
-    dc.vertexShaderId = create_shader(GL_VERTEX_SHADER, vertexShader);
-    dc.fragShaderId = create_shader(GL_FRAGMENT_SHADER, fragShader);
-    if (dc.vertexShaderId == 0 || dc.fragShaderId == 0) {
-        err_quit("create_program failed\n");
-    }
-
-    GLuint program = glCreateProgram();
-    glAttachShader(program, dc.vertexShaderId);
-    glAttachShader(program, dc.fragShaderId);
-    return program;
-}
-
-static char* load_shader(const char* filename)
-{
-    string src;
-    string line;
-    ifstream ifs{filename};
-    while (getline(ifs, line)) {
-        src += line + "\n";
-    }
-
-    // cerr << src << endl;
-    return strndup(src.c_str(), src.size());
-}
-
-static void init_gl(int argc, const char** argv)
-{
-    float width = dc.mode.hdisplay, height = dc.mode.vdisplay;
-
-    char* vertex_shader = nullptr, *frag_shader = nullptr;
-
-    if (argc == 3) {
-        vertex_shader = load_shader(argv[1]);
-        frag_shader = load_shader(argv[2]);
-    } else {
-        vertex_shader = load_shader("vertex_shader.glsl");
-        frag_shader = load_shader("fragment_shader.glsl");
-    }
-
-    dc.program = create_program(vertex_shader, frag_shader);
-    free(vertex_shader);
-    free(frag_shader);
-
-    glGenBuffers(1, &dc.vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, dc.vbo);
-
-    GLfloat vertex_data[] = {
-        -1.0, -1.0,
-        -1.0, 1.0,
-         1.0, 1.0,
-
-         1.0, 1.0,
-         1.0, -1.0,
-        -1.0, -1.0,
-    };
-
-    glBufferData(GL_ARRAY_BUFFER, sizeof vertex_data, vertex_data, GL_STATIC_DRAW);
-
-    glLinkProgram(dc.program);
-    glUseProgram(dc.program);
-
-    GLint pos_attrib = glGetAttribLocation(dc.program, "position");
-    glEnableVertexAttribArray(pos_attrib);
-    glVertexAttribPointer(pos_attrib, 2, GL_FLOAT, GL_FALSE, 0, NULL);
-
-    //projection
-    GLint projMId = glGetUniformLocation(dc.program, "projM");
-    glm::mat4 projM = glm::perspective(60.0f, width / height, 1.0f, 10.0f);
-    glUniformMatrix4fv(projMId, 1, GL_FALSE, glm::value_ptr(projM));
-
-    //view
-    GLint viewMId = glGetUniformLocation(dc.program, "viewM");
-    auto viewM = glm::lookAt(
-        glm::vec3(1.0f, 1.0f, 1.0f),
-        glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.0f, 0.0f, 1.0f));
-    glUniformMatrix4fv(viewMId, 1, GL_FALSE, glm::value_ptr(viewM));
-
-    auto resolution = glm::vec3(width, height, 1.0);
-    glUniform3fv(glGetUniformLocation(dc.program, "resolution"),
-                 1, glm::value_ptr(resolution));
-
-    glClearColor(0.0, 0.0, 0.0, 1.0);
-}
-
-static struct timeval first_time = {0, 0};
-
-static void render_scene(int width, int height)
-{
-    //glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    struct timeval tm;
-    gettimeofday(&tm, NULL);
-    if (!first_time.tv_sec) first_time = tm;
-
-    float timeval = (tm.tv_sec - first_time.tv_sec) +
-        (tm.tv_usec - first_time.tv_usec) / 1000000.0;
-    GLint time = glGetUniformLocation(dc.program, "time");
-    glUniform1f(time, timeval);
-
-    glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 static void drm_fb_destroy_callback(struct gbm_bo *bo, void *data)
@@ -219,7 +55,7 @@ static void render()
     struct timeval tm_start, tm_end;
     gettimeofday(&tm_start ,NULL);
 
-    render_scene(dc.mode.hdisplay, dc.mode.vdisplay);
+    dc.action_mode->render();
     if (!eglSwapBuffers(dc.display, dc.surface)) {
         printf("cannot swap buffers");
         exit(-1);
@@ -300,11 +136,6 @@ static void draw_loop()
                 return;
 
             } else if (FD_ISSET(fd, &fds)) {
-                struct timeval tv_ev;
-                gettimeofday(&tv_ev, NULL);
-                float timeval = (tv_ev.tv_sec - first_time.tv_sec) +
-                    (tv_ev.tv_usec - first_time.tv_usec) / 1000000.0;
-                std::cerr << "handle event at " << timeval << std::endl;
                 drmHandleEvent(fd, &ev);
             }
         }
@@ -467,10 +298,7 @@ static void setup_egl()
 
 static void cleanup()
 {
-    glDeleteBuffers(1, &dc.vbo);
-    glDeleteShader(dc.vertexShaderId);
-    glDeleteShader(dc.fragShaderId);
-    glDeleteProgram(dc.program);
+    dc.action_mode->deinit();
 
     eglDestroySurface(dc.display, dc.surface);
     eglDestroyContext(dc.display, dc.gl_context);
@@ -491,7 +319,11 @@ int main(int argc, const char* argv[])
 {
     setup_drm();
     setup_egl();
-    init_gl(argc, argv);
+
+    dc.action_mode = new TextMode;
+    if (!dc.action_mode->init(dc.mode.hdisplay, dc.mode.vdisplay)) {
+        return -1;
+    }
 
     if (!eglSwapBuffers(dc.display, dc.surface)) {
         printf("cannot swap buffers");
