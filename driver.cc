@@ -300,7 +300,11 @@ static void draw_loop()
                 return;
 
             } else if (FD_ISSET(fd, &fds)) {
-                std::cerr << "handle event" << std::endl;
+                struct timeval tv_ev;
+                gettimeofday(&tv_ev, NULL);
+                float timeval = (tv_ev.tv_sec - first_time.tv_sec) +
+                    (tv_ev.tv_usec - first_time.tv_usec) / 1000000.0;
+                std::cerr << "handle event at " << timeval << std::endl;
                 drmHandleEvent(fd, &ev);
             }
         }
