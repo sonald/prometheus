@@ -16,6 +16,7 @@ using namespace std;
 #include "scene.h"
 #include "atlas.h"
 #include "driver.h"
+#include "options.h"
 
 static DisplayContext dc;
 
@@ -315,12 +316,17 @@ static void cleanup()
     close(dc.fd);
 }
 
-int main(int argc, const char* argv[])
+int main(int argc, char* argv[])
 {
+    OptionManager* optManager = OptionManager::get(argc, argv);
+
     setup_drm();
     setup_egl();
 
-    dc.action_mode = new TextMode;
+    if (optManager->get<string>("mode") == "text")
+        dc.action_mode = new TextMode;
+    else 
+        dc.action_mode = new SceneMode;
     if (!dc.action_mode->init(dc.mode.hdisplay, dc.mode.vdisplay)) {
         return -1;
     }
