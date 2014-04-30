@@ -16,6 +16,8 @@ pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GBM REQUIRED gbm)
 pkg_check_modules(FT2 REQUIRED freetype2)
 
+#TODO: check for glm headers
+
 # Find includes in corresponding build directories
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 

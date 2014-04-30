@@ -16,10 +16,21 @@ using namespace std;
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+SceneMode::SceneMode()
+    :_theme{"scene_frag.glsl"} // default theme
+{
+}
+
+void SceneMode::setThemeFile(const std::string& glsl)
+{
+    this->_theme = glsl;
+    //check exists
+}
+
 bool SceneMode::init(int width, int height)
 {
     _screenWidth = width, _screenHeight = height;
-    GLProcess* proc = glprocess_create("scene_vertex.glsl", "scene_frag.glsl");
+    GLProcess* proc = glprocess_create("scene_vertex.glsl", _theme.c_str());
     if (!proc) return false;
     _proc = *proc;
 

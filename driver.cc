@@ -323,10 +323,16 @@ int main(int argc, char* argv[])
     setup_drm();
     setup_egl();
 
-    if (optManager->get<string>("mode") == "text")
+    if (optManager->get("mode") == "text") {
         dc.action_mode = new TextMode;
-    else 
-        dc.action_mode = new SceneMode;
+    } else {
+        string theme = optManager->get("theme");
+        auto m = new SceneMode;
+        if (!theme.empty())
+            m->setThemeFile(theme);
+        dc.action_mode = m;
+        
+    }
     if (!dc.action_mode->init(dc.mode.hdisplay, dc.mode.vdisplay)) {
         return -1;
     }
