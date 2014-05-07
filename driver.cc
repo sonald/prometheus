@@ -318,6 +318,7 @@ static void cleanup()
 
 int main(int argc, char* argv[])
 {
+    std::setlocale(LC_ALL, "");
     OptionManager* optManager = OptionManager::get(argc, argv);
 
     setup_drm();

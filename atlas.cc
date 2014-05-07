@@ -51,7 +51,7 @@ bool TextMode::load_char_helper(FT_ULong char_code)
 }
 
 //@arg preloads is a wstring which contains all chars that need to load into atlas
-void TextMode::create_atlas(FT_Face face, int pointSize, std::wstring preloads)
+void TextMode::create_atlas(FT_Face face, int pointSize, std::string preloads)
 {
     FT_Set_Pixel_Sizes(face, 0, pointSize);
     _atlas.point_size = pointSize;
@@ -63,7 +63,10 @@ void TextMode::create_atlas(FT_Face face, int pointSize, std::wstring preloads)
         load_char_helper(i);
     }
 
-    for (auto i: preloads) {
+    std::wstring ws(preloads.size(), L'\0');
+    auto ret = std::mbstowcs(&ws[0], preloads.data(), ws.size());
+    ws.resize(ret);
+    for (auto i: ws) {
         load_char_helper(i);
     }
 
@@ -85,16 +88,19 @@ void TextMode::create_atlas(FT_Face face, int pointSize, std::wstring preloads)
     }
 }
 
-void TextMode::render_str(std::wstring ws, float x, float y, float sx, float sy)
+void TextMode::render_str(std::string s, float x, float y, float sx, float sy)
 {
+    std::wstring ws(s.size(), L'\0');
+    auto ret = std::mbstowcs(&ws[0], s.data(), ws.size());
+    ws.resize(ret+1);
     int len = ws.length();
 
     struct point_t {
         GLfloat x, y, s, t;
     } points[6 * len];
 
-    int i = 0;
-    for (auto c: ws) {
+    for (int i = 0; i < len; i++) {
+        auto c = ws[i];
         GLfloat x0 = x + _atlas.infos[c].left * sx;
         GLfloat y0 = y + _atlas.infos[c].top * sy;
         GLfloat w = _atlas.infos[c].width * sx, h = _atlas.infos[c].height * sy;
@@ -114,7 +120,6 @@ void TextMode::render_str(std::wstring ws, float x, float y, float sx, float sy)
 
         x += _atlas.infos[c].ax * sx;
         y += _atlas.infos[c].ay * sy;
-        i++;
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, _proc.vbo);
@@ -195,7 +200,7 @@ bool TextMode::init(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    create_atlas(face, 28, L"普华客户端操作系统");
+    create_atlas(face, 28, "普华客户端操作系统");
 
     glClearColor(0.1, 0.1, 0.4, 1.0);
     return true;
@@ -228,16 +233,16 @@ void TextMode::render()
     float sx = 2.0 / _screenWidth, sy = 2.0 / _screenHeight;
         
     float x = -1.0, y = 1.0 - ps1 * sy; 
-    render_text("Welcome to iSoft Client OS", x, y, sx, sy);
+    render_str("Welcome to iSoft Client OS", x, y, sx, sy);
 
     GLfloat bgcolor2[] = {
         0, float((glm::cos(t) + 1.0)/2.0), float((glm::sin(t)+1.0)/2.0), 0.5
     };
     glUniform4fv(glGetUniformLocation(_proc.program, "bgcolor"), 1, bgcolor2);
     x = -1.0 + (_screenWidth/2.0) * sx - 0.3, y = 1.0 - (_screenHeight/2.0) * sy; 
-    render_str(L"普华客户端操作系统", x, y, sx, sy);
+    render_str("普华客户端操作系统", x, y, sx, sy);
 
     y -= ps1 * 2 * sy;
-    render_str(L"System Loading...", x, y, sx, sy);
+    render_str("System Loading...", x, y, sx, sy);
 }
 
