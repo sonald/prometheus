@@ -171,6 +171,10 @@ bool TextMode::init(int width, int height)
     GLuint program = _proc.program;
     glUseProgram(program);
 
+    auto resolution = glm::vec3(_screenWidth, _screenHeight, 1.0);
+    glUniform3fv(glGetUniformLocation(_proc.program, "resolution"),
+                 1, glm::value_ptr(resolution));
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -193,7 +197,7 @@ bool TextMode::init(int width, int height)
 
     create_atlas(face, 28, L"普华客户端操作系统");
 
-    glClearColor(1.0, 1.0, 1.0, 1.0);
+    glClearColor(0.1, 0.1, 0.4, 1.0);
     return true;
 }
 
@@ -212,6 +216,8 @@ void TextMode::render()
     gettimeofday(&tv, NULL);
     if (!tv_start.tv_sec) tv_start = tv;
     float t = (tv.tv_sec - tv_start.tv_sec) + (tv.tv_usec - tv_start.tv_usec) / 1000000.0;
+    GLint time = glGetUniformLocation(_proc.program, "time");
+    glUniform1f(time, t);
 
     GLfloat bgcolor[] = {
         float((glm::cos(t) + 1.0)/2.0), float((glm::sin(t)+1.0)/2.0), 0, 1
