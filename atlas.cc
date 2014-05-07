@@ -30,26 +30,41 @@ static void init_ft()
     }
 }
 
-void TextMode::create_atlas(FT_Face face, int pointSize)
+bool TextMode::load_char_helper(FT_ULong char_code)
+{
+    FT_GlyphSlot slot = face->glyph;
+    if (FT_Load_Char(face, char_code, FT_LOAD_RENDER)) {
+        std::cerr << "load " << char_code << " failed\n";
+        return false;
+    }
+
+    _atlas.infos[char_code] = {
+        (float)slot->bitmap_left, (float)slot->bitmap_top,
+        (float)slot->bitmap.width, (float)slot->bitmap.rows,
+        float(slot->advance.x >> 6), float(slot->advance.y >> 6),
+        _atlas.width
+    };
+
+    _atlas.height = std::max(_atlas.height, _atlas.infos[char_code].height);
+    _atlas.width += _atlas.infos[char_code].width + 10;
+    return true;
+}
+
+//@arg preloads is a wstring which contains all chars that need to load into atlas
+void TextMode::create_atlas(FT_Face face, int pointSize, std::wstring preloads)
 {
     FT_Set_Pixel_Sizes(face, 0, pointSize);
     _atlas.point_size = pointSize;
     FT_GlyphSlot slot = face->glyph;
-    for (unsigned char i = 32; i < 128; i++) {
-        if (FT_Load_Char(face, (char)i, FT_LOAD_RENDER)) {
-            std::cerr << "load " << i << " failed\n";
-            continue;
-        }
+    FT_ULong num = 128;
+    
+    //ASCII is loaded by default
+    for (auto i = 32; i < num; i++) {
+        load_char_helper(i);
+    }
 
-        _atlas.infos[i] = {
-            (float)slot->bitmap_left, (float)slot->bitmap_top,
-            (float)slot->bitmap.width, (float)slot->bitmap.rows,
-            float(slot->advance.x >> 6), float(slot->advance.y >> 6),
-            _atlas.width
-        };
-
-        _atlas.height = std::max(_atlas.height, _atlas.infos[i].height);
-        _atlas.width += _atlas.infos[i].width + 10;
+    for (auto i: preloads) {
+        load_char_helper(i);
     }
 
     //NOTE: transparent and `+10` above are anti rendering artifacts.
@@ -59,14 +74,52 @@ void TextMode::create_atlas(FT_Face face, int pointSize)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, _atlas.width, _atlas.height,
             0, GL_ALPHA, GL_UNSIGNED_BYTE, transparent);
 
-    for (unsigned char i = 32; i < 128; i++) {
-        if (FT_Load_Char(face, (char)i, FT_LOAD_RENDER)) {
+    for (auto p: _atlas.infos) {
+        auto i = p.first;
+        if (FT_Load_Char(face, i, FT_LOAD_RENDER)) {
             std::cerr << "load " << i << " failed\n";
             continue;
         }
         glTexSubImage2D(GL_TEXTURE_2D, 0, _atlas.infos[i].offset, 0, _atlas.infos[i].width, 
                 _atlas.infos[i].height, GL_ALPHA, GL_UNSIGNED_BYTE, slot->bitmap.buffer);
     }
+}
+
+void TextMode::render_str(std::wstring ws, float x, float y, float sx, float sy)
+{
+    int len = ws.length();
+
+    struct point_t {
+        GLfloat x, y, s, t;
+    } points[6 * len];
+
+    int i = 0;
+    for (auto c: ws) {
+        GLfloat x0 = x + _atlas.infos[c].left * sx;
+        GLfloat y0 = y + _atlas.infos[c].top * sy;
+        GLfloat w = _atlas.infos[c].width * sx, h = _atlas.infos[c].height * sy;
+
+        float tw = _atlas.infos[c].width / _atlas.width;
+        float tx = _atlas.infos[c].offset / _atlas.width;
+        float ty = _atlas.infos[c].height / _atlas.height;
+
+        int p = i * 6;
+        points[p++] = {x0, y0,         tx, 0,};
+        points[p++] = {x0 + w, y0,     tx + tw, 0,};
+        points[p++] = {x0, y0 - h,     tx, ty,};
+
+        points[p++] = {x0, y0 - h,     tx, ty,};
+        points[p++] = {x0 + w, y0,     tx + tw, 0,};
+        points[p++] = {x0 + w, y0 - h, tx + tw, ty,};
+
+        x += _atlas.infos[c].ax * sx;
+        y += _atlas.infos[c].ay * sy;
+        i++;
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, _proc.vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof points, points, GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, len * 6);
 }
 
 void TextMode::render_text(const char *text, float x, float y, float sx, float sy)
@@ -138,7 +191,7 @@ bool TextMode::init(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    create_atlas(face, 28);
+    create_atlas(face, 28, L"普华客户端操作系统");
 
     glClearColor(1.0, 1.0, 1.0, 1.0);
     return true;
@@ -165,20 +218,20 @@ void TextMode::render()
     };
     glUniform4fv(glGetUniformLocation(_proc.program, "bgcolor"), 1, bgcolor);
 
-    float ps1 = 24.0, ps2 = 38.0;
+    float ps1 = 24.0;
     float sx = 2.0 / _screenWidth, sy = 2.0 / _screenHeight;
         
     float x = -1.0, y = 1.0 - ps1 * sy; 
-    render_text("this is freetype2 rendered text", x, y, sx, sy);
-
-    x = -1.0, y = 1.0 - (ps1+ps2) * sy; 
-    render_text("this is freetype2 rendered text again", x, y, sx, sy);
+    render_text("Welcome to iSoft Client OS", x, y, sx, sy);
 
     GLfloat bgcolor2[] = {
         0, float((glm::cos(t) + 1.0)/2.0), float((glm::sin(t)+1.0)/2.0), 0.5
     };
     glUniform4fv(glGetUniformLocation(_proc.program, "bgcolor"), 1, bgcolor2);
-    x = -1.0 + 0.002, y = 1.0 - (ps1+ps2+ps2/3) * sy; 
-    render_text("overrided transparent line", x, y, sx, sy);
+    x = -1.0 + (_screenWidth/2.0) * sx - 0.3, y = 1.0 - (_screenHeight/2.0) * sy; 
+    render_str(L"普华客户端操作系统", x, y, sx, sy);
+
+    y -= ps1 * 2 * sy;
+    render_str(L"System Loading...", x, y, sx, sy);
 }
 

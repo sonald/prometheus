@@ -7,6 +7,8 @@
 #include <freetype2/ft2build.h>
 #include FT_FREETYPE_H
 
+#include <string>
+#include <unordered_map>
 
 struct char_info_t {
     float left, top;
@@ -17,7 +19,8 @@ struct char_info_t {
 
 struct atlas_t {
     float width, height;
-    struct char_info_t infos[128];    
+    //struct char_info_t infos[128];    
+    std::unordered_map<FT_ULong, struct char_info_t> infos;
     int point_size;
 };
 
@@ -34,8 +37,10 @@ class TextMode: public ActionMode {
 
     private:
         atlas_t _atlas;
-        void create_atlas(FT_Face face, int pointSize);
+        void create_atlas(FT_Face face, int pointSize, std::wstring preloads);
         void render_text(const char *text, float x, float y, float sx, float sy);
+        void render_str(std::wstring ws, float x, float y, float sx, float sy);
+        bool load_char_helper(FT_ULong char_code);
 };
 
 #endif
