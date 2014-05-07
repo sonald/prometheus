@@ -127,43 +127,6 @@ void TextMode::render_str(std::string s, float x, float y, float sx, float sy)
     glDrawArrays(GL_TRIANGLES, 0, len * 6);
 }
 
-void TextMode::render_text(const char *text, float x, float y, float sx, float sy)
-{
-    int len = strlen(text);
-
-    struct point_t {
-        GLfloat x, y, s, t;
-    } points[6 * len];
-
-    for (int i = 0; i < len; ++i) {
-        int c = text[i];
-        GLfloat x0 = x + _atlas.infos[c].left * sx;
-        GLfloat y0 = y + _atlas.infos[c].top * sy;
-        GLfloat w = _atlas.infos[c].width * sx, h = _atlas.infos[c].height * sy;
-
-        float tw = _atlas.infos[c].width / _atlas.width;
-        float tx = _atlas.infos[c].offset / _atlas.width;
-        float ty = _atlas.infos[c].height / _atlas.height;
-
-        int p = i * 6;
-        points[p++] = {x0, y0,         tx, 0,};
-        points[p++] = {x0 + w, y0,     tx + tw, 0,};
-        points[p++] = {x0, y0 - h,     tx, ty,};
-
-        points[p++] = {x0, y0 - h,     tx, ty,};
-        points[p++] = {x0 + w, y0,     tx + tw, 0,};
-        points[p++] = {x0 + w, y0 - h, tx + tw, ty,};
-
-        x += _atlas.infos[c].ax * sx;
-        y += _atlas.infos[c].ay * sy;
-    }
-
-    glBindBuffer(GL_ARRAY_BUFFER, _proc.vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof points, points, GL_DYNAMIC_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, len * 6);
-
-}
-
 static timeval tv_start = {0, 0};
 
 bool TextMode::init(int width, int height)

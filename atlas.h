@@ -38,7 +38,6 @@ class TextMode: public ActionMode {
     private:
         atlas_t _atlas;
         void create_atlas(FT_Face face, int pointSize, std::string preloads);
-        void render_text(const char *text, float x, float y, float sx, float sy);
         void render_str(std::string s, float x, float y, float sx, float sy);
         bool load_char_helper(FT_ULong char_code);
 };
