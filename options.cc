@@ -13,7 +13,8 @@ OptionManager::OptionManager()
 
 void OptionManager::usage()
 {
-    cerr << "usage: " << _progName << " [-m [text|scene] [-t theme]] [-h]" << endl;
+    cerr << "usage: " << _progName 
+        << " [-c card] [-m [text|scene] [-t theme]] [-h]" << endl;
     exit(EXIT_FAILURE);
 }
 
@@ -25,16 +26,18 @@ void OptionManager::parse(int argc, char *argv[])
     }
 
     struct option opts[] = {
-        {"mode", 1, NULL, 0},
-        {"theme", 1, NULL, 0},
-        {NULL, 0, NULL, 0}
+        {"mode", 1, NULL, 'm'},
+        {"theme", 1, NULL, 't'},
+        {"card", 1, NULL, 'c'},
+        {NULL, 0, NULL, 0},
     };
 
     int c, index;
-    while ((c = getopt_long(argc, argv, "m:t:h", opts, &index)) != -1) {
+    while ((c = getopt_long(argc, argv, "m:t:c:h", opts, &index)) != -1) {
         switch(c) {
             case 'm': _opts["mode"] = {optarg}; break;
             case 't': _opts["theme"] = {optarg}; break;
+            case 'c': _opts["card"] = {optarg}; break;
             case 'h': usage(); break;
             default: break;
         }

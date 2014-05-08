@@ -19,6 +19,7 @@ using namespace std;
 #include "options.h"
 
 static DisplayContext dc;
+static OptionManager* optManager;
 
 static void err_quit(const char *fmt, ...)
 {
@@ -155,7 +156,11 @@ static void setup_drm()
     drmModeEncoder* encoder;                //encoder array
 
     //open default dri device
-    dc.fd = open("/dev/dri/card1", O_RDWR|O_CLOEXEC|O_NONBLOCK);
+    string card = "/dev/dri/card0";
+    if (!optManager->get("card").empty()) {
+        card = optManager->get("card");
+    }
+    dc.fd = open(card.c_str(), O_RDWR|O_CLOEXEC|O_NONBLOCK);
     if (dc.fd <= 0) { 
         err_quit(strerror(errno));
     }
@@ -321,7 +326,7 @@ static void cleanup()
 int main(int argc, char* argv[])
 {
     std::setlocale(LC_ALL, "");
-    OptionManager* optManager = OptionManager::get(argc, argv);
+    optManager = OptionManager::get(argc, argv);
 
     setup_drm();
     setup_egl();
