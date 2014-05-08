@@ -35,7 +35,22 @@ configure_file(${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h)
 
 file(GLOB SRCS "${PROJECT_SOURCE_DIR}/*.cc")
 
-add_executable(${target} ${SRCS})
+# make atlas shaders builtin
+set(SHADERS atlas_frag.glsl.o atlas_vertex.glsl.o)
+foreach(shader ${SHADERS})
+add_custom_target(${shader})
+string(REPLACE ".o" "" shader_src ${shader})
+add_custom_command(TARGET ${shader}
+    PRE_BUILD
+    COMMAND ld -r -o ${shader} -z noexecstack --format=binary ${shader_src}
+    COMMAND objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents 
+    ${shader}
+    COMMAND mv ${shader} ${PROJECT_BINARY_DIR}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+endforeach()
+
+add_executable(${target} ${SRCS} ${SHADERS})
+add_dependencies(${target} ${SHADERS})
 
 target_link_libraries(${target} ${GLESV2_LIBRARIES} ${EGL_LIBRARIES}
     ${GBM_LIBRARIES} ${LIBDRM_LIBRARIES} ${FT2_LIBRARIES})

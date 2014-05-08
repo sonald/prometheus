@@ -9,7 +9,8 @@ struct GLProcess {
     GLuint vbo;
 };
 
-GLProcess* glprocess_create(const char *vertex_path, const char *frag_path);
+GLProcess* glprocess_create(const char *vertex_path, const char *frag_path, 
+        bool inmemory = false);
 void glprocess_release(GLProcess* proc);
 
 

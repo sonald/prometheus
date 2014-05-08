@@ -39,3 +39,8 @@ these demos are immature and may harm your video card, try with caution.
 * egl_drm_tty2 demos opengl rendered on egl surface.
 * egl_drm_tty3 demos animated opengl on egl surface.
 * egl_drm_shining_circle animated circling with bad frame rate (problemmatic driver maybe)
+
+
+TODO
+====
+* provide scene mode plugin loader or just use binary blob like altas shaders

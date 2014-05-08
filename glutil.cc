@@ -45,15 +45,19 @@ static GLuint create_shader(GLenum type, const char *source)
     return shader_id;
 }
 
-GLProcess* glprocess_create(const char *vertex_path, const char *frag_path)
+GLProcess* glprocess_create(const char *vertex_path, const char *frag_path,
+        bool inmemory)
 {
-    string vertex_shader = load_shader(vertex_path);
-    if (vertex_shader.empty()) {
-        return nullptr;
+    string vertex_shader, frag_shader;
+    if (inmemory) {
+        vertex_shader = {vertex_path};
+        frag_shader = {frag_path};
+    } else {
+        vertex_shader = load_shader(vertex_path);
+        frag_shader = load_shader(frag_path);
     }
 
-    string frag_shader = load_shader(frag_path);
-    if (frag_shader.empty()) {
+    if (frag_shader.empty() || (vertex_shader.empty())) {
         return nullptr;
     }
 

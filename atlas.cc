@@ -129,11 +129,24 @@ void TextMode::render_str(std::string s, float x, float y, float sx, float sy)
 
 static timeval tv_start = {0, 0};
 
+extern const char _binary_atlas_frag_glsl_end[];
+extern const char _binary_atlas_frag_glsl_start[];
+extern const char _binary_atlas_vertex_glsl_end[];
+extern const char _binary_atlas_vertex_glsl_start[];
+
 bool TextMode::init(int width, int height)
 {
     _screenWidth = width, _screenHeight = height;
     init_ft();
-    GLProcess* proc = glprocess_create("atlas_vertex.glsl", "atlas_frag.glsl");
+
+    GLuint vlen = _binary_atlas_vertex_glsl_end - _binary_atlas_vertex_glsl_start;
+    GLuint flen = _binary_atlas_frag_glsl_end - _binary_atlas_frag_glsl_start;
+    cerr << "binary glsl vlen " << vlen << ", flen " << flen << endl;
+
+    string ver_src = strndup(_binary_atlas_vertex_glsl_start, vlen);
+    string frag_src = strndup(_binary_atlas_frag_glsl_start, flen);
+    //GLProcess* proc = glprocess_create("atlas_vertex.glsl", "atlas_frag.glsl");
+    GLProcess* proc = glprocess_create(ver_src.c_str(), frag_src.c_str(), true);
     if (!proc) return false;
     _proc = *proc;
     GLuint program = _proc.program;

@@ -155,11 +155,12 @@ static void setup_drm()
     drmModeEncoder* encoder;                //encoder array
 
     //open default dri device
-    dc.fd = open("/dev/dri/card0", O_RDWR|O_CLOEXEC|O_NONBLOCK);
+    dc.fd = open("/dev/dri/card1", O_RDWR|O_CLOEXEC|O_NONBLOCK);
     if (dc.fd <= 0) { 
         err_quit(strerror(errno));
     }
 
+    drmSetMaster(dc.fd);
     //acquire drm resources
     resources = drmModeGetResources(dc.fd);
     if(resources == 0) {
@@ -313,6 +314,7 @@ static void cleanup()
                 dc.saved_crtc->x, dc.saved_crtc->y, &dc.conn, 1, &dc.saved_crtc->mode);
         drmModeFreeCrtc(dc.saved_crtc);
     }
+    drmDropMaster(dc.fd);
     close(dc.fd);
 }
 
