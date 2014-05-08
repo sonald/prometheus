@@ -16,7 +16,9 @@ pkg_check_modules(EGL REQUIRED egl)
 pkg_check_modules(GBM REQUIRED gbm)
 pkg_check_modules(FT2 REQUIRED freetype2)
 
-#TODO: check for glm headers
+if (NOT EXISTS /usr/include/glm)
+    message(SEND_ERROR "-- missing glm headers, plz install glm first")
+endif()
 
 # Find includes in corresponding build directories
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -35,22 +37,27 @@ configure_file(${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h)
 
 file(GLOB SRCS "${PROJECT_SOURCE_DIR}/*.cc")
 
-# make atlas shaders builtin
-set(SHADERS atlas_frag.glsl.o atlas_vertex.glsl.o)
-foreach(shader ${SHADERS})
-add_custom_target(${shader})
-string(REPLACE ".o" "" shader_src ${shader})
-add_custom_command(TARGET ${shader}
-    PRE_BUILD
-    COMMAND ld -r -o ${shader} -z noexecstack --format=binary ${shader_src}
-    COMMAND objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents 
-    ${shader}
-    COMMAND mv ${shader} ${PROJECT_BINARY_DIR}
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+
+# make all shaders built into executable
+file(GLOB SHADERS RELATIVE ${PROJECT_SOURCE_DIR} "*.glsl")
+foreach(shader_src ${SHADERS})
+    set(shader "${shader_src}.o")
+    set(SHADER_OBJS "${SHADER_OBJS}" ${shader})
+    message("generate shader target ${shader}")
+
+    add_custom_target(${shader})
+    add_custom_command(TARGET ${shader} PRE_BUILD
+        COMMAND ld -r -o ${shader} -z noexecstack --format=binary ${shader_src}
+        COMMAND objcopy --rename-section .data=.rodata,alloc,load,readonly,data,contents 
+        ${shader}
+        COMMAND mv ${shader} ${PROJECT_BINARY_DIR}
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+    set_source_files_properties(
+        ${shader} PROPERTIES EXTERNAL_OBJECT TRUE  GENERATED TRUE)
 endforeach()
 
-add_executable(${target} ${SRCS} ${SHADERS})
-add_dependencies(${target} ${SHADERS})
+add_executable(${target} ${SRCS} ${SHADER_OBJS})
+add_dependencies(${target} ${SHADER_OBJS})
 
 target_link_libraries(${target} ${GLESV2_LIBRARIES} ${EGL_LIBRARIES}
     ${GBM_LIBRARIES} ${LIBDRM_LIBRARIES} ${FT2_LIBRARIES})
