@@ -36,6 +36,10 @@ struct DisplayContext {
     bool pflip_pending;
     bool cleanup;
 
+    //vt
+    int vtfd;
+    bool vt_activated;
+
     ActionMode* action_mode;
 };
 

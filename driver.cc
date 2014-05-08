@@ -6,6 +6,11 @@
 #include <fcntl.h>
 #include <cstdarg>
 #include <unistd.h>
+#include <sys/ioctl.h>
+
+#include <signal.h>
+#include <termios.h>
+#include <linux/vt.h>
 
 #include <iostream>
 #include <fstream>
@@ -78,13 +83,15 @@ static void render()
     }
     printf("dc.next_fb_id = %u\n", dc.next_fb_id);
 
-    auto ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
-            DRM_MODE_PAGE_FLIP_EVENT, NULL);
-    if (ret) {
-        fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n",
-                dc.conn, errno);
-    } else {
-        dc.pflip_pending = true;
+    if (dc.vt_activated) {
+        auto ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
+                DRM_MODE_PAGE_FLIP_EVENT, NULL);
+        if (ret) {
+            fprintf(stderr, "cannot flip CRTC for connector %u (%d): %m\n",
+                    dc.conn, errno);
+        } else {
+            dc.pflip_pending = true;
+        }
     }
 
     gettimeofday(&tm_end, NULL);
@@ -98,7 +105,10 @@ static void modeset_page_flip_event(int fd, unsigned int frame,
         void *data)
 {
     std::cerr << __func__ << " frame: " << frame << std::endl;
-    dc.pflip_pending = false;
+    if (dc.vt_activated)
+        dc.pflip_pending = false;
+    else
+        std::cerr << "vt is deactivated, wait" << std::endl;
 }
 
 static void modeset_vblank_handler(int fd, unsigned int sequence, 
@@ -107,7 +117,7 @@ static void modeset_vblank_handler(int fd, unsigned int sequence,
     std::cerr << __func__ << " sequence: " << sequence << std::endl;
 }
 
-static void draw_loop()
+static void run_loop()
 {
     int fd = dc.fd;
     int ret;
@@ -303,8 +313,51 @@ static void setup_egl()
     }
 }
 
+static void on_leave_vt(int sig)
+{
+    std::cerr << __func__ << std::endl;
+    ioctl (dc.vtfd, VT_RELDISP, 1);
+    dc.vt_activated = false;
+    drmDropMaster(dc.fd);
+}
+
+static void on_enter_vt(int sig)
+{
+    std::cerr << __func__ << std::endl;
+    ioctl (dc.vtfd, VT_RELDISP, VT_ACKACQ);
+    dc.vt_activated = true;
+    drmSetMaster(dc.fd);
+    drmModeSetCrtc(dc.fd, dc.crtc, dc.next_fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+}
+
+static void setup_vt()
+{
+    string ttyname = "/dev/tty0";
+    if (!optManager->get("tty").empty())
+        ttyname = optManager->get("tty");
+    dc.vtfd = open(ttyname.c_str(), O_RDWR|O_NOCTTY);
+    struct vt_mode mode = {0};
+
+    mode.mode = VT_PROCESS;
+    mode.relsig = SIGUSR1;
+    mode.acqsig = SIGUSR2;
+    if (ioctl(dc.vtfd, VT_SETMODE, &mode) < 0) {
+        close(dc.vtfd);
+        dc.vtfd = -1;
+        perror("ioctl");
+        return;
+    }
+
+    signal(SIGUSR1, on_leave_vt);
+    signal(SIGUSR2, on_enter_vt);
+    dc.vt_activated = true;
+}
+
 static void cleanup()
 {
+    if (dc.vtfd > 0) 
+        close(dc.vtfd);
+
     dc.action_mode->deinit();
 
     eglDestroySurface(dc.display, dc.surface);
@@ -330,6 +383,7 @@ int main(int argc, char* argv[])
 
     setup_drm();
     setup_egl();
+    setup_vt();
 
     if (optManager->get("mode") == "text") {
         dc.action_mode = new TextMode;
@@ -361,7 +415,7 @@ int main(int argc, char* argv[])
     auto ret = drmModeSetCrtc(dc.fd, dc.crtc, fb_id, 0, 0, &dc.conn, 1, &dc.mode);
     if(ret) { printf("Could not set mode!"); exit(0); }
 
-    draw_loop();
+    run_loop();
 
     cleanup();
 

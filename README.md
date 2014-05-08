@@ -11,7 +11,6 @@ mkdir build
 cd build
 cmake ..
 make 
-
 ```
 
 to compile successfully, you need mesa compiled with drm platform 
@@ -27,6 +26,17 @@ project dir.
 
 ```
 ./build/prometheus -m scene -t beamwave_frag.glsl
+```
+
+or run text rendering mode
+```
+sudo ./build/prometheus -m text
+```
+
+if you got multiple video cards, you can use -c (--card) to specify one that 
+is in use.
+```
+sudo ./build/prometheus -m text --card /dev/dri/card1 -T /dev/tty2
 ```
 
 **note**: remember to run it at a virtual console.
