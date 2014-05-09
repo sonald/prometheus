@@ -167,9 +167,10 @@ static void setup_drm()
 
     //open default dri device
     string card = "/dev/dri/card0";
-    if (!optManager->get("card").empty()) {
-        card = optManager->get("card");
+    if (!optManager->value<string>("card").empty()) {
+        card = optManager->value<string>("card");
     }
+    std::cerr << "open " << card << endl;
     dc.fd = open(card.c_str(), O_RDWR|O_CLOEXEC|O_NONBLOCK);
     if (dc.fd <= 0) { 
         err_quit(strerror(errno));
@@ -333,8 +334,8 @@ static void on_enter_vt(int sig)
 static void setup_vt()
 {
     string ttyname = "/dev/tty0";
-    if (!optManager->get("tty").empty())
-        ttyname = optManager->get("tty");
+    if (!optManager->value<string>("tty").empty())
+        ttyname = optManager->value<string>("tty");
     dc.vtfd = open(ttyname.c_str(), O_RDWR|O_NOCTTY);
     struct vt_mode mode = {0};
 
@@ -378,17 +379,23 @@ static void cleanup()
 
 int main(int argc, char* argv[])
 {
-    std::setlocale(LC_ALL, "");
     optManager = OptionManager::get(argc, argv);
 
+    if (!optManager->value<bool>("nodaemon")) {
+        daemon(1, 1);
+        std::cerr << "daemonize " << optManager->progName() << endl;
+    }
+
+    std::setlocale(LC_ALL, "en_US.UTF-8");
     setup_drm();
     setup_egl();
     setup_vt();
 
-    if (optManager->get("mode") == "text") {
+    if (optManager->value<string>("mode") == "text") {
+        std::cerr << "run in text rendering mode" << endl;
         dc.action_mode = new TextMode;
     } else {
-        string theme = optManager->get("theme");
+        string theme = optManager->value<string>("theme");
         auto m = new SceneMode;
         if (!theme.empty())
             m->setThemeFile(theme);

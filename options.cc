@@ -14,7 +14,9 @@ OptionManager::OptionManager()
 void OptionManager::usage()
 {
     cerr << "usage: " << _progName 
-        << " [-c card] [-m [text|scene] [-t theme]] [-T ttyname] [-h]" << endl;
+        << " [-c|--card card] [-m|--mode [text|scene] "
+        << "[-t|--theme theme]] [-T|--tty ttyname] [-n|--nodaemon] [-h]" 
+        << endl;
     exit(EXIT_FAILURE);
 }
 
@@ -30,16 +32,18 @@ void OptionManager::parse(int argc, char *argv[])
         {"theme", 1, NULL, 't'},
         {"card", 1, NULL, 'c'},
         {"tty", 1, NULL, 'T'},
+        {"nodaemon", 0, NULL, 'n'},
         {NULL, 0, NULL, 0},
     };
 
     int c, index;
-    while ((c = getopt_long(argc, argv, "m:t:c:T:h", opts, &index)) != -1) {
+    while ((c = getopt_long(argc, argv, "m:t:c:T:nh", opts, &index)) != -1) {
         switch(c) {
             case 'm': _opts["mode"] = {optarg}; break;
             case 't': _opts["theme"] = {optarg}; break;
             case 'c': _opts["card"] = {optarg}; break;
             case 'T': _opts["tty"] = {optarg}; break;
+            case 'n': _opts["nodaemon"] = "true"; break;
             case 'h': usage(); break;
             default: break;
         }
@@ -58,8 +62,39 @@ OptionManager* OptionManager::get(int argc, char *argv[])
     return _instance;
 }
 
-std::string OptionManager::get(std::string opt)
+int OptionManager::_value_helper(std::string opt, int)
 {
-    return _opts[opt];
+    int i = -1;
+    try {
+        i = std::stoi(opt);
+    } catch(...) {
+        //pass
+    }
+    return i;
 }
 
+bool OptionManager::_value_helper(std::string opt, bool)
+{
+    bool b = false;
+    try {
+        b = std::stoi(opt);
+    } catch(...) {
+        b = (opt == "true" || opt == "t");
+    }
+    return b;
+}
+
+float OptionManager::_value_helper(std::string opt, float)
+{
+    float f = 0.0;
+    try {
+        f = std::stof(opt);
+    } catch(...) {
+    }
+    return f;
+}
+
+std::string OptionManager::_value_helper(std::string opt, std::string)
+{
+    return opt;
+}
