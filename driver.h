@@ -35,10 +35,14 @@ struct DisplayContext {
 
     bool pflip_pending;
     bool cleanup;
+    bool paused;
 
     //vt
     int vtfd;
     bool vt_activated;
+
+    //communication id
+    int commid;
 
     ActionMode* action_mode;
 };

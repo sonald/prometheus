@@ -1,6 +1,8 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/time.h>
 #include <string.h>
 #include <fcntl.h>
@@ -69,7 +71,7 @@ static void render()
     }
 
     struct gbm_bo *bo = dc.next_bo = gbm_surface_lock_front_buffer(dc.gbm_surface);
-    printf("next_bo = %lu\n", (unsigned long)bo);
+    //printf("next_bo = %lu\n", (unsigned long)bo);
     if (!bo) {
         printf("cannot lock front buffer during creation");
         exit(-1);
@@ -81,9 +83,9 @@ static void render()
     } else {
         dc.next_fb_id = bo_to_fb(bo);
     }
-    printf("dc.next_fb_id = %u\n", dc.next_fb_id);
+    //printf("dc.next_fb_id = %u\n", dc.next_fb_id);
 
-    if (dc.vt_activated) {
+    if (dc.vt_activated && !dc.paused) {
         auto ret = drmModePageFlip(dc.fd, dc.crtc, dc.next_fb_id, 
                 DRM_MODE_PAGE_FLIP_EVENT, NULL);
         if (ret) {
@@ -94,18 +96,18 @@ static void render()
         }
     }
 
-    gettimeofday(&tm_end, NULL);
-    float timeval = (tm_end.tv_sec - tm_start.tv_sec) +
-        (tm_end.tv_usec - tm_start.tv_usec) / 1000000.0;
-    std::cerr << "frame render duration: " << timeval << std::endl;
+    //gettimeofday(&tm_end, NULL);
+    //float timeval = (tm_end.tv_sec - tm_start.tv_sec) +
+        //(tm_end.tv_usec - tm_start.tv_usec) / 1000000.0;
+    //std::cerr << "frame render duration: " << timeval << std::endl;
 }
 
 static void modeset_page_flip_event(int fd, unsigned int frame,
         unsigned int sec, unsigned int usec,
         void *data)
 {
-    std::cerr << __func__ << " frame: " << frame << std::endl;
-    if (dc.vt_activated)
+    //std::cerr << __func__ << " frame: " << frame << std::endl;
+    if (dc.vt_activated && !dc.paused)
         dc.pflip_pending = false;
     else
         std::cerr << "vt is deactivated, wait" << std::endl;
@@ -115,6 +117,52 @@ static void modeset_vblank_handler(int fd, unsigned int sequence,
         unsigned int tv_sec, unsigned int tv_usec, void *user_data)
 {
     std::cerr << __func__ << " sequence: " << sequence << std::endl;
+}
+
+// return true if event ask for break of event loop due to error
+static bool handleClientEvent()
+{
+    struct sockaddr_un un;
+    socklen_t len = sizeof un;
+    int cfd = accept(dc.commid, (struct sockaddr*)&un, &len);
+    if (cfd < 0) {
+        perror("accept");
+        return false;
+    }
+
+    char buf[20];
+    int n = read(cfd, buf, sizeof buf);
+    if (n <= 0) {
+        std::cerr << strerror(errno) << std::endl;
+        close(cfd);
+        return false;
+    }
+
+    close(cfd);
+    buf[n] = '\0';
+    std::cerr << "received command(" << n << "): " << buf << std::endl;
+    if (string(buf) == "Q") {
+        dc.cleanup = true;
+        return true;
+
+    } else if (string(buf) == "P") {
+        if (!dc.paused) {
+            dc.paused = true;
+            drmDropMaster(dc.fd);
+        }
+
+    } else if (string(buf) == "R") {
+        if (dc.paused) {
+            dc.paused = false;
+            if (dc.vt_activated && dc.pflip_pending)
+                dc.pflip_pending = false;
+            drmSetMaster(dc.fd);
+            drmModeSetCrtc(dc.fd, dc.crtc, dc.next_fb_id, 0, 0, &dc.conn, 1, &dc.mode);
+        }
+    }
+
+
+    return false;
 }
 
 static void run_loop()
@@ -137,15 +185,22 @@ static void run_loop()
         while (dc.pflip_pending) {
             FD_SET(0, &fds);
             FD_SET(fd, &fds);
+            FD_SET(dc.commid, &fds);
 
             struct timeval tv { 0, 100 };
             ret = select(fd + 1, &fds, NULL, NULL, &tv);
             if (ret < 0) {
-                fprintf(stderr, "select() failed with %d: %m\n", errno);
+                std::cerr << "select: " << strerror(errno) << std::endl;
                 break;
+
             } else if (FD_ISSET(0, &fds)) {
-                fprintf(stderr, "exit due to user-input\n");
-                return;
+                std::cerr << "exit due to user-input" << std::endl;
+                dc.cleanup = true;
+                break;
+
+            } else if (FD_ISSET(dc.commid, &fds)) {
+                if (handleClientEvent())
+                    break;
 
             } else if (FD_ISSET(fd, &fds)) {
                 drmHandleEvent(fd, &ev);
@@ -156,6 +211,8 @@ static void run_loop()
             gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
             dc.bo = dc.next_bo;
         }
+
+        if (dc.cleanup) break;
     }
 }
 
@@ -317,9 +374,9 @@ static void setup_egl()
 static void on_leave_vt(int sig)
 {
     std::cerr << __func__ << std::endl;
-    ioctl (dc.vtfd, VT_RELDISP, 1);
     dc.vt_activated = false;
     drmDropMaster(dc.fd);
+    ioctl (dc.vtfd, VT_RELDISP, 1);
 }
 
 static void on_enter_vt(int sig)
@@ -354,8 +411,43 @@ static void setup_vt()
     dc.vt_activated = true;
 }
 
+static const char *comm_path = ":prometheus.sock";
+static void setup_comm()
+{
+    struct sockaddr_un un;
+    memset(&un, 0, sizeof un);
+    un.sun_family = AF_UNIX;
+    strncpy(&un.sun_path[1], comm_path, strlen(comm_path));
+
+    int id = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (id < 0) {
+        perror("socket");
+        return;
+    }
+
+    if (bind(id, (struct sockaddr*)&un, sizeof un) < 0) {
+        perror("bind");
+        close(id);
+        return;
+    }
+
+    if (listen(id, 1) < 0) {
+        perror("listen");
+        close(id);
+        return;
+    }
+
+    dc.commid = id;
+    std::cerr << "commid = " << dc.commid << std::endl;
+}
+
 static void cleanup()
 {
+    std::cerr << __func__ << std::endl;
+    if (dc.commid) {
+        close(dc.commid);
+    }
+
     if (dc.vtfd > 0) 
         close(dc.vtfd);
 
@@ -387,6 +479,8 @@ int main(int argc, char* argv[])
     }
 
     std::setlocale(LC_ALL, "en_US.UTF-8");
+
+    setup_comm();
     setup_drm();
     setup_egl();
     setup_vt();

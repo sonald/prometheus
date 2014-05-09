@@ -16,9 +16,12 @@ build() {
     add_binary /usr/lib/xorg/modules/dri/swrast_dri.so
     add_binary /usr/lib/xorg/modules/dri/vmwgfx_dri.so
 
-	add_binary /usr/sbin/prometheus
     add_binary /usr/lib/egl/egl_gallium.so
     add_binary /usr/lib/gbm/gbm_gallium_drm.so
+
+	add_binary /usr/sbin/prometheus
+	add_binary /usr/sbin/prometheusd
+
     add_runscript
 }
 

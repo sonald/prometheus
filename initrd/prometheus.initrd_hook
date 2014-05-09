@@ -1,7 +1,7 @@
 #!/usr/bin/ash
 
 run_hook() {
-    prometheus -m text 
+    prometheusd -m text 
 }
 
 # vim: set ft=sh:
