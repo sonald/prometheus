@@ -1,0 +1,30 @@
+#!/bin/bash
+
+build() {
+    add_file /usr/share/fonts/microsoft/msyh.ttf
+    add_file /usr/lib/locale/locale-archive
+
+    add_binary /usr/lib/xorg/modules/dri/i915_dri.so
+    add_binary /usr/lib/xorg/modules/dri/i965_dri.so
+    add_binary /usr/lib/xorg/modules/dri/nouveau_dri.so
+    add_binary /usr/lib/xorg/modules/dri/nouveau_vieux_dri.so
+    add_binary /usr/lib/xorg/modules/dri/r200_dri.so
+    add_binary /usr/lib/xorg/modules/dri/r300_dri.so
+    add_binary /usr/lib/xorg/modules/dri/r600_dri.so
+    add_binary /usr/lib/xorg/modules/dri/radeon_dri.so
+    add_binary /usr/lib/xorg/modules/dri/radeonsi_dri.so
+    add_binary /usr/lib/xorg/modules/dri/swrast_dri.so
+    add_binary /usr/lib/xorg/modules/dri/vmwgfx_dri.so
+
+	add_binary /usr/sbin/prometheus
+    add_binary /usr/lib/egl/egl_gallium.so
+    add_binary /usr/lib/gbm/gbm_gallium_drm.so
+    add_runscript
+}
+
+help() {
+	echo "This hook includes prometheus in the initramfs image."
+}
+
+# vim: set ft=sh:
+
