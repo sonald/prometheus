@@ -207,12 +207,11 @@ static void run_loop()
             }
         }
 
+        if (dc.cleanup) break;
         if (dc.next_bo) {
             gbm_surface_release_buffer(dc.gbm_surface, dc.bo);
             dc.bo = dc.next_bo;
         }
-
-        if (dc.cleanup) break;
     }
 }
 
@@ -451,15 +450,33 @@ static void cleanup()
     if (dc.vtfd > 0) 
         close(dc.vtfd);
 
+	drmEventContext ev;
+	memset(&ev, 0, sizeof(ev));
+	ev.version = DRM_EVENT_CONTEXT_VERSION;
+	ev.page_flip_handler = modeset_page_flip_event;
+    ev.vblank_handler = modeset_vblank_handler;
+    std::cerr << "wait for pending page-flip to complete..." << std::endl;
+    while (dc.pflip_pending) {
+        int ret = drmHandleEvent(dc.fd, &ev);
+        if (ret)
+            break;
+    }
     dc.action_mode->deinit();
 
     eglDestroySurface(dc.display, dc.surface);
     eglDestroyContext(dc.display, dc.gl_context);
     eglTerminate(dc.display);
         
+    if (dc.bo) {
+        std::cerr << "destroy bo: " << (unsigned long)dc.bo << std::endl;
+        gbm_bo_destroy(dc.bo);
+        std::cerr << "destroy bo: " << (unsigned long)dc.next_bo << std::endl;
+        gbm_bo_destroy(dc.next_bo);
+    }
     gbm_surface_destroy(dc.gbm_surface);
     gbm_device_destroy(dc.gbm);
 
+    if (dc.pflip_pending) std::cerr << "still has pflip pending" << std::endl;
     if (dc.saved_crtc) {
         drmModeSetCrtc(dc.fd, dc.saved_crtc->crtc_id, dc.saved_crtc->buffer_id, 
                 dc.saved_crtc->x, dc.saved_crtc->y, &dc.conn, 1, &dc.saved_crtc->mode);

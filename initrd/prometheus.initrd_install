@@ -1,23 +1,37 @@
 #!/bin/bash
 
+add_library_dir() {
+    local f=
+    add_dir "$1"
+    for f in "$1"/*; do
+        if [[ -L $f ]]; then 
+            add_symlink "$f" "$(readlink -f "$f")"
+        elif [[ -e $f ]]; then
+            add_binary "$f"
+        fi
+    done
+}
+
 build() {
     add_file /usr/share/fonts/microsoft/msyh.ttf
     add_file /usr/lib/locale/locale-archive
 
-    add_binary /usr/lib/xorg/modules/dri/i915_dri.so
-    add_binary /usr/lib/xorg/modules/dri/i965_dri.so
-    add_binary /usr/lib/xorg/modules/dri/nouveau_dri.so
-    add_binary /usr/lib/xorg/modules/dri/nouveau_vieux_dri.so
-    add_binary /usr/lib/xorg/modules/dri/r200_dri.so
-    add_binary /usr/lib/xorg/modules/dri/r300_dri.so
-    add_binary /usr/lib/xorg/modules/dri/r600_dri.so
-    add_binary /usr/lib/xorg/modules/dri/radeon_dri.so
-    add_binary /usr/lib/xorg/modules/dri/radeonsi_dri.so
-    add_binary /usr/lib/xorg/modules/dri/swrast_dri.so
-    add_binary /usr/lib/xorg/modules/dri/vmwgfx_dri.so
+    add_library_dir /usr/lib/xorg/modules/dri
+    [ -e /usr/lib/egl ] && add_library_dir /usr/lib/egl
+    [ -e /usr/lib/gbm ] && add_library_dir /usr/lib/gbm
 
-    add_binary /usr/lib/egl/egl_gallium.so
-    add_binary /usr/lib/gbm/gbm_gallium_drm.so
+    # compatible with archlinux and iSoft Client OS
+    [ -e /usr/lib/mesa ] && add_library_dir /usr/lib/mesa
+    
+    if [ -L /usr/lib/libGLESv2.so.2.0.0 ]; then
+        add_symlink /usr/lib/libGLESv2.so.2.0.0
+        add_symlink /usr/lib/libGLESv2.so.2
+    fi
+
+    if [ -L /usr/lib/libEGL.so.1.0.0 ]; then
+        add_symlink /usr/lib/libEGL.so.1.0.0
+        add_symlink /usr/lib/libEGL.so.1
+    fi
 
 	add_binary /usr/sbin/prometheus
 	add_binary /usr/sbin/prometheusd
