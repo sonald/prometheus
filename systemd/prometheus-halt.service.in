@@ -1,0 +1,10 @@
+[Unit]
+Description=Show Prometheus Halt Screen
+After=getty@tty1.service 
+Before=halt.service
+DefaultDependencies=no
+ConditionKernelCommandLine=!prometheus.enable=0
+
+[Service]
+ExecStart=@CMAKE_INSTALL_PREFIX@/sbin/prometheusd --stage shutdown
+Type=forking

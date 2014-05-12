@@ -1,0 +1,10 @@
+[Unit]
+Description=Show Prometheus Reboot with kexec Screen
+After=getty@tty1.service 
+Before=kexec.service
+DefaultDependencies=no
+ConditionKernelCommandLine=!prometheus.enable=0
+
+[Service]
+ExecStart=@CMAKE_INSTALL_PREFIX@/sbin/prometheusd --stage shutdown
+Type=forking

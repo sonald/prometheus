@@ -36,8 +36,14 @@ include_directories(${FT2_INCLUDE_DIRS})
 
 
 configure_file(${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h)
-configure_file(${PROJECT_SOURCE_DIR}/systemd/prometheus-quit.service.in 
-    ${PROJECT_BINARY_DIR}/systemd/prometheus-quit.service)
+
+file(GLOB SERVICES RELATIVE ${PROJECT_SOURCE_DIR} "systemd/*.service.in")
+message("SERVICES: ${SERVICES}")
+foreach(service ${SERVICES})
+    string(REGEX REPLACE "\\.in$" "" service_dst ${service})
+    configure_file(${PROJECT_SOURCE_DIR}/${service}
+        ${PROJECT_BINARY_DIR}/${service_dst})
+endforeach()
 
 set(SRCS atlas.cc driver.cc glutil.cc options.cc scene.cc)
 
@@ -74,6 +80,9 @@ install(FILES initrd/prometheus.initrd_hook
 install(FILES initrd/prometheus.initrd_install
     DESTINATION lib/initcpio/install RENAME prometheus)
 # quit service
-install(FILES ${PROJECT_BINARY_DIR}/systemd/prometheus-quit.service
-    DESTINATION /usr/lib/systemd/system 
-    PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+foreach(service ${SERVICES})
+    string(REGEX REPLACE "\\.in$" "" service_dst ${service})
+    install(FILES ${PROJECT_BINARY_DIR}/${service_dst}
+        DESTINATION /usr/lib/systemd/system 
+        PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
+endforeach()

@@ -12,6 +12,7 @@
 
 #include <signal.h>
 #include <termios.h>
+#include <linux/kd.h>
 #include <linux/vt.h>
 
 #include <iostream>
@@ -35,6 +36,32 @@ static void err_quit(const char *fmt, ...)
     vfprintf(stderr, fmt, ap);
     exit(-1);
     va_end(ap);
+}
+
+static map<int, string> vt_modes = {
+    {KD_GRAPHICS, "graphics"},
+    {KD_TEXT, "text"},
+    {KD_TEXT0, "text"},
+    {KD_TEXT1, "text"},
+};
+
+static void set_terminal_mode(int fd, int mode)
+{
+    //TODO: error check
+    if (dc.vt_mode != mode) {
+        std::cerr << "switch vt mode to " << vt_modes[mode] << std::endl;
+        ioctl(dc.vtfd, KDSETMODE, mode);
+        dc.vt_mode = mode;
+    }
+}
+
+static int get_terminal_mode(int fd)
+{
+    //TODO: error check
+    int mode = -1;
+    ioctl(dc.vtfd, KDGETMODE, &mode);
+    std::cerr << "current vt mode " << vt_modes[mode] << std::endl;
+    return mode;
 }
 
 static void drm_fb_destroy_callback(struct gbm_bo *bo, void *data)
@@ -98,7 +125,7 @@ static void render()
 
     //gettimeofday(&tm_end, NULL);
     //float timeval = (tm_end.tv_sec - tm_start.tv_sec) +
-        //(tm_end.tv_usec - tm_start.tv_usec) / 1000000.0;
+    //(tm_end.tv_usec - tm_start.tv_usec) / 1000000.0;
     //std::cerr << "frame render duration: " << timeval << std::endl;
 }
 
@@ -161,7 +188,6 @@ static bool handleClientEvent()
         }
     }
 
-
     return false;
 }
 
@@ -177,7 +203,7 @@ static void run_loop()
     ev.version = DRM_EVENT_CONTEXT_VERSION;
     ev.page_flip_handler = modeset_page_flip_event;
     ev.vblank_handler = modeset_vblank_handler;
-    
+
     while (1) {
         dc.pflip_pending = true;
         render();
@@ -261,11 +287,14 @@ static void setup_drm()
         encoder = drmModeGetEncoder(dc.fd, connector->encoder_id);
         if(encoder) {
             dc.crtc = encoder->crtc_id;
+            drmModeCrtc* crtc = drmModeGetCrtc(dc.fd, dc.crtc);
+            dc.mode = crtc->mode;
             drmModeFreeEncoder(encoder);
         }
     }
 
     if (!encoder) {
+        std::cerr << "connector has no encoder";
         for(i = 0; i < resources->count_encoders; ++i) {
             encoder = drmModeGetEncoder(dc.fd,resources->encoders[i]);
             if(encoder==0) { continue; }
@@ -282,11 +311,11 @@ static void setup_drm()
         if (i == resources->count_encoders) {
             err_quit("No active encoder found!");
         }
+        dc.mode = connector->modes[0];
     }
 
     dc.saved_crtc = drmModeGetCrtc(dc.fd, dc.crtc);
 
-    dc.mode = connector->modes[0];
     printf("\tMode chosen [%s] : Clock => %d, Vertical refresh => %d, Type => %d\n",
             dc.mode.name, dc.mode.clock, dc.mode.vrefresh, dc.mode.type);
 
@@ -300,8 +329,8 @@ static void setup_egl()
     printf("backend name: %s\n", gbm_device_get_backend_name(dc.gbm));
 
     dc.gbm_surface = gbm_surface_create(dc.gbm, dc.mode.hdisplay,
-                      dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
-                      GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
+            dc.mode.vdisplay, GBM_FORMAT_XRGB8888,
+            GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING);
     if (!dc.gbm_surface) {
         printf("cannot create gbm surface (%d): %m", errno);
         exit(-EFAULT);
@@ -357,8 +386,8 @@ static void setup_egl()
     }
 
     dc.surface = eglCreateWindowSurface(dc.display, conf,
-                          (EGLNativeWindowType)dc.gbm_surface,
-                          NULL);
+            (EGLNativeWindowType)dc.gbm_surface,
+            NULL);
     if (dc.surface == EGL_NO_SURFACE) {
         printf("cannot create EGL window surface");
         exit(-1);
@@ -407,6 +436,9 @@ static void setup_vt()
 
     signal(SIGUSR1, on_leave_vt);
     signal(SIGUSR2, on_enter_vt);
+
+    dc.origin_vt_mode = get_terminal_mode(dc.vtfd);
+    set_terminal_mode(dc.vtfd, KD_GRAPHICS);
     dc.vt_activated = true;
 }
 
@@ -447,13 +479,15 @@ static void cleanup()
         close(dc.commid);
     }
 
-    if (dc.vtfd > 0) 
+    if (dc.vtfd > 0) {
+        set_terminal_mode(dc.vtfd, dc.origin_vt_mode);
         close(dc.vtfd);
+    }
 
-	drmEventContext ev;
-	memset(&ev, 0, sizeof(ev));
-	ev.version = DRM_EVENT_CONTEXT_VERSION;
-	ev.page_flip_handler = modeset_page_flip_event;
+    drmEventContext ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.version = DRM_EVENT_CONTEXT_VERSION;
+    ev.page_flip_handler = modeset_page_flip_event;
     ev.vblank_handler = modeset_vblank_handler;
     std::cerr << "wait for pending page-flip to complete..." << std::endl;
     while (dc.pflip_pending) {
@@ -466,7 +500,7 @@ static void cleanup()
     eglDestroySurface(dc.display, dc.surface);
     eglDestroyContext(dc.display, dc.gl_context);
     eglTerminate(dc.display);
-        
+
     if (dc.bo) {
         std::cerr << "destroy bo: " << (unsigned long)dc.bo << std::endl;
         gbm_bo_destroy(dc.bo);
@@ -511,7 +545,7 @@ int main(int argc, char* argv[])
         if (!theme.empty())
             m->setThemeFile(theme);
         dc.action_mode = m;
-        
+
     }
     if (!dc.action_mode->init(dc.mode.hdisplay, dc.mode.vdisplay)) {
         return -1;

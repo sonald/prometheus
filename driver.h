@@ -40,6 +40,8 @@ struct DisplayContext {
     //vt
     int vtfd;
     bool vt_activated;
+    int vt_mode; //current mode: graphics or text
+    int origin_vt_mode; 
 
     //communication id
     int commid;
