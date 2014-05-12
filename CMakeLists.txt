@@ -36,8 +36,8 @@ include_directories(${FT2_INCLUDE_DIRS})
 
 
 configure_file(${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h)
-configure_file(${PROJECT_SOURCE_DIR}/prometheus-quit.service.in 
-    ${PROJECT_BINARY_DIR}/prometheus-quit.service)
+configure_file(${PROJECT_SOURCE_DIR}/systemd/prometheus-quit.service.in 
+    ${PROJECT_BINARY_DIR}/systemd/prometheus-quit.service)
 
 set(SRCS atlas.cc driver.cc glutil.cc options.cc scene.cc)
 
@@ -74,6 +74,6 @@ install(FILES initrd/prometheus.initrd_hook
 install(FILES initrd/prometheus.initrd_install
     DESTINATION lib/initcpio/install RENAME prometheus)
 # quit service
-install(FILES ${PROJECT_BINARY_DIR}/prometheus-quit.service
+install(FILES ${PROJECT_BINARY_DIR}/systemd/prometheus-quit.service
     DESTINATION /usr/lib/systemd/system 
     PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)

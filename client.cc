@@ -57,11 +57,6 @@ int main(int argc, char *argv[])
     dispatch(argv[1]);
     close(id);
 
-    ofstream ofs{"/tmp/prometheus.done"};
-    ofs << "";
-
-    // bad way to wait for server to finish
-    sleep(1);
     return 0;
 }
 
