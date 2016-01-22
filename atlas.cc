@@ -17,17 +17,26 @@ static FT_Library ft;
 static FT_Face face;
 static GLuint tex;
 
-static void init_ft()
+static void init_ft(const string& font)
 {
     if (FT_Init_FreeType(&ft)) {
         std::cerr << "init freetype failed" << std::endl;
         exit(-1);
     }
 
-    if (FT_New_Face(ft, "/usr/share/fonts/microsoft/msyh.ttf", 0, &face)) {
-        std::cerr << "load face failed" << std::endl;
-        exit(-1);
+    if (FT_New_Face(ft, font.c_str(), 0, &face)) {
+        std::cerr << "load " << font << " failed" << std::endl;
+        if (FT_New_Face(ft, "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 0, &face)) {
+            std::cerr << "load face failed" << std::endl;
+            exit(-1);
+        }
     }
+}
+
+void TextMode::setFontPath(const std::string& path)
+{
+    /* TODO: check validity */
+    _fontPath = path;
 }
 
 bool TextMode::load_char_helper(FT_ULong char_code)
@@ -137,7 +146,7 @@ extern const char _binary_atlas_vertex_glsl_start[];
 bool TextMode::init(int width, int height)
 {
     _screenWidth = width, _screenHeight = height;
-    init_ft();
+    init_ft(_fontPath);
 
     GLuint vlen = _binary_atlas_vertex_glsl_end - _binary_atlas_vertex_glsl_start;
     GLuint flen = _binary_atlas_frag_glsl_end - _binary_atlas_frag_glsl_start;
@@ -176,7 +185,7 @@ bool TextMode::init(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-    create_atlas(face, 28, "普华客户端操作系统");
+    create_atlas(face, 28, "正在加载操作系统.....");
 
     glClearColor(0.1, 0.1, 0.4, 1.0);
     return true;
@@ -209,14 +218,14 @@ void TextMode::render()
     float sx = 2.0 / _screenWidth, sy = 2.0 / _screenHeight;
         
     float x = -1.0, y = 1.0 - ps1 * sy; 
-    render_str("Welcome to iSoft Client OS", x, y, sx, sy);
+    render_str("Welcome to Linux", x, y, sx, sy);
 
     GLfloat bgcolor2[] = {
         0, float((glm::cos(t) + 1.0)/2.0), float((glm::sin(t)+1.0)/2.0), 0.5
     };
     glUniform4fv(glGetUniformLocation(_proc.program, "bgcolor"), 1, bgcolor2);
     x = -1.0 + (_screenWidth/2.0) * sx - 0.3, y = 1.0 - (_screenHeight/2.0) * sy; 
-    render_str("普华客户端操作系统", x, y, sx, sy);
+    render_str("真正加载操作系统......", x, y, sx, sy);
 
     y -= ps1 * 2 * sy;
     render_str("System Loading...", x, y, sx, sy);

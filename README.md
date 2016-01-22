@@ -4,7 +4,10 @@ A simple plymouth replacement by using egl and drm.
 
 Build
 =====
-simple guide:
+before build, install dependencies. On Ubuntu/Debian
+`sudo apt-get install libglfw3-dev libglm-dev`
+
+simple version:
 
 ```
 mkdir build
@@ -15,8 +18,8 @@ make
 
 to compile successfully, you need mesa compiled with drm platform 
 support and also gbm enabled.
-this is satisfied in modern GNU/Linux (tested on iSoft Client OS 
-which is based on Archlinux). glm is required for opengl es matrix
+this is satisfied in any of modern GNU/Linux distributions. 
+glm is required for openGLES matrix
 operation. for compiling demos, glfw3 is also needed.
 
 Run
@@ -25,18 +28,18 @@ right now, there is no installation provided. you need to run it at
 project dir. 
 
 ```
-./build/prometheus -m scene -t beamwave_frag.glsl
+./build/prometheusd -m scene -t beamwave_frag.glsl
 ```
 
 or run text rendering mode
 ```
-sudo ./build/prometheus -m text
+sudo ./build/prometheusd -m text
 ```
 
 if you got multiple video cards, you can use -c (--card) to specify one that 
 is in use.
 ```
-sudo ./build/prometheus -m text --card /dev/dri/card1 -T /dev/tty2
+sudo ./build/prometheusd -m text --card /dev/dri/card1 -T /dev/tty2
 ```
 
 **note**: remember to run it at a virtual console.

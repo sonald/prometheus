@@ -14,8 +14,9 @@ OptionManager::OptionManager()
 void OptionManager::usage()
 {
     cerr << "usage: " << _progName 
-        << " [-c|--card card] [-m|--mode [text|scene] "
-        << "[-t|--theme theme]] [-T|--tty ttyname] [-n|--nodaemon] [-h]" 
+        << " [-c|--card card] [-m|--mode [text|scene]] [-T|--tty ttyname] [-n|--nodaemon] [-h]" << endl
+        << " scene mode [-t|--theme theme] " << endl
+        << " text mode [-f|--font full_ttf_font_path] " << endl
         << endl;
     exit(EXIT_FAILURE);
 }
@@ -33,14 +34,16 @@ void OptionManager::parse(int argc, char *argv[])
         {"card", 1, NULL, 'c'},
         {"tty", 1, NULL, 'T'},
         {"nodaemon", 0, NULL, 'n'},
+        {"font", 1, NULL, 'f'},
         {NULL, 0, NULL, 0},
     };
 
     int c, index;
-    while ((c = getopt_long(argc, argv, "m:t:c:T:nh", opts, &index)) != -1) {
+    while ((c = getopt_long(argc, argv, "f:m:t:c:T:nh", opts, &index)) != -1) {
         switch(c) {
             case 'm': _opts["mode"] = {optarg}; break;
             case 't': _opts["theme"] = {optarg}; break;
+            case 'f': _opts["font"] = {optarg}; break;
             case 'c': _opts["card"] = {optarg}; break;
             case 'T': _opts["tty"] = {optarg}; break;
             case 'n': _opts["nodaemon"] = "true"; break;

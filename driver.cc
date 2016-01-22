@@ -538,7 +538,10 @@ int main(int argc, char* argv[])
 
     if (optManager->value<string>("mode") == "text") {
         std::cerr << "run in text rendering mode" << endl;
-        dc.action_mode = new TextMode;
+        auto m = new TextMode;
+        string font = optManager->value<string>("font");
+        if (!font.empty()) m->setFontPath(font);
+        dc.action_mode = m;
     } else {
         string theme = optManager->value<string>("theme");
         auto m = new SceneMode;
